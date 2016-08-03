@@ -100,7 +100,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 	defer close_fd([fd]{close(fd); });
 
 
-	if (stat(data.c_str(), &rsrc_st) < 0) throw_errno();
+	if (stat(rsrc.c_str(), &rsrc_st) < 0) throw_errno();
 	if (rsrc_st.st_size == 0) {
 		// mmapping a zero-length file throws EINVAL.
 		if (!_p) unlink_list.push_back(rsrc);

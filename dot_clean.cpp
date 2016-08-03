@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <err.h>
 
 #include <sys/types.h>
 #include <dirent.h>
@@ -105,7 +106,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
 
 
-	if (header->magicNum != APPLEDOUBLE_CIGAM || header->versionNum != 0x00020000)
+	if (header->magicNum != APPLEDOUBLE_MAGIC || header->versionNum != 0x00020000)
 		throw_not_apple_double();
 
 	if (header->numEntries * sizeof(ASEntry) + sizeof(ASHeader) > mf.size()) throw_eof();
@@ -154,7 +155,8 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 				break;
 			}
 			case AS_FINDERINFO: {
-				if (e.entryLength != 32) {
+				/* Apple now includes xattr w/ finder info */
+				if (e.entryLength < 32) {
 					fputs("Warning: Invalid Finder Info size.\n", stderr);
 					break;
 				}
@@ -163,7 +165,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 				if (rfd < 0) throw_errno("com.apple.ResourceFork");
 				defer close_fd([rfd](){ close(rfd); });
 
-				ssize_t ok = write(rfd, mf.data() + e.entryOffset, e.entryLength);
+				ssize_t ok = write(rfd, mf.data() + e.entryOffset, 32);
 				if (ok < 0) throw_errno("com.apple.FinderInfo");
 				//if (ok != e.entryLength) return -1;
 				#endif
@@ -214,15 +216,18 @@ void one_dir(std::string dir) noexcept {
 
 
 	dirp = opendir(dir.c_str());
+	if (dirp) {
+		while ( (dp = readdir(dirp)) ) {
+			if (dp->d_name[0] != '.') continue;
+			if (dp->d_name[1] != '_') continue;
 
-	while ( (dp = readdir(dirp)) ) {
-		if (dp->d_name[0] != '.') continue;
-		if (dp->d_name[1] != '_') continue;
-
-		std::string name = dp->d_name;
-		one_file(dir + name.substr(2), dir + name);
+			std::string name = dp->d_name;
+			one_file(dir + name.substr(2), dir + name);
+		}
+		closedir(dirp);
+	} else {
+		warn("%s", dir.c_str());
 	}
-	closedir(dirp);
 
 }
 

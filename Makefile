@@ -1,6 +1,6 @@
 CXX = clang++
 LINK.o = $(LINK.cc)
-CXXFLAGS += -std=c++11
+CXXFLAGS += -std=c++11 -g
 
 dot_clean: dot_clean.o mapped_file.o
 

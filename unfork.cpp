@@ -10,6 +10,8 @@
 #include <errno.h>
 #include <stdlib.h>
 
+#include <sys/types.h>
+
 #include <arpa/inet.h>
 
 #include <sysexits.h>
@@ -102,7 +104,7 @@ void unfork(const char *in, const char *out) {
 
 	if (outname.empty()) throw std::runtime_error("No filename");
 
-	int fd = open(outname.c_str(), O_CREAT | O_TRUNC | O_WRONLY);
+	int fd = open(outname.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0666);
 	if (fd < 1) throw_errno();
 	defer close_fd([fd](){ close(fd); });
 
@@ -119,7 +121,7 @@ void unfork(const char *in, const char *out) {
 				break;
 			}
 			case AS_RESOURCE: {
-				int fd = fopenattr(fd, "com.apple.ResourceFork", O_CREAT | O_TRUNC | O_WRONLY);
+				int fd = openat(fd, "com.apple.ResourceFork", O_XATTR | O_CREAT | O_TRUNC | O_WRONLY, 0666);
 				if (fd < 0) throw_errno("com.apple.ResourceFork");
 				defer close_fd([fd](){ close(fd); });
 
@@ -133,7 +135,7 @@ void unfork(const char *in, const char *out) {
 					fputs("Warning: Invalid Finder Info size.\n", stderr);
 					break;
 				}
-				int fd = fopenattr(fd, "com.apple.FinderInfo", O_CREAT | O_TRUNC | O_WRONLY);
+				int fd = openat(fd, "com.apple.FinderInfo", O_XATTR | O_CREAT | O_TRUNC | O_WRONLY, 0666);
 				if (fd < 0) throw_errno("com.apple.ResourceFork");
 				defer close_fd([fd](){ close(fd); });
 

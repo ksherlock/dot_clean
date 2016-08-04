@@ -121,11 +121,11 @@ void unfork(const char *in, const char *out) {
 				break;
 			}
 			case AS_RESOURCE: {
-				int fd = openat(fd, "com.apple.ResourceFork", O_XATTR | O_CREAT | O_TRUNC | O_WRONLY, 0666);
-				if (fd < 0) throw_errno("com.apple.ResourceFork");
-				defer close_fd([fd](){ close(fd); });
+				int rfd = openat(fd, "com.apple.ResourceFork", O_XATTR | O_CREAT | O_TRUNC | O_WRONLY, 0666);
+				if (rfds < 0) throw_errno("com.apple.ResourceFork");
+				defer close_fd([rfd](){ close(rfd); });
 
-				ssize_t ok = write(fd, mf.data() + e.entryOffset, e.entryLength);
+				ssize_t ok = write(rfd, mf.data() + e.entryOffset, e.entryLength);
 				if (ok < 0) throw_errno("com.apple.ResourceFork");
 				//if (ok != e.entryLength) return -1;
 				break;
@@ -135,11 +135,11 @@ void unfork(const char *in, const char *out) {
 					fputs("Warning: Invalid Finder Info size.\n", stderr);
 					break;
 				}
-				int fd = openat(fd, "com.apple.FinderInfo", O_XATTR | O_CREAT | O_TRUNC | O_WRONLY, 0666);
-				if (fd < 0) throw_errno("com.apple.ResourceFork");
-				defer close_fd([fd](){ close(fd); });
+				int rfd = openat(fd, "com.apple.FinderInfo", O_XATTR | O_CREAT | O_TRUNC | O_WRONLY, 0666);
+				if (rfd < 0) throw_errno("com.apple.ResourceFork");
+				defer close_fd([rfd](){ close(rfd); });
 
-				ssize_t ok = write(fd, mf.data() + e.entryOffset, e.entryLength);
+				ssize_t ok = write(rfd, mf.data() + e.entryOffset, e.entryLength);
 				if (ok < 0) throw_errno("com.apple.FinderInfo");
 				//if (ok != e.entryLength) return -1;
 				break;
@@ -147,12 +147,10 @@ void unfork(const char *in, const char *out) {
 		}
 
 	}
-
-	close(fd);
 }
 
 void usage() {
-	fputs("Usage: applesingle [-o file] file...\n", stderr);
+	fputs("Usage: unfork [-o file] file...\n", stderr);
 	exit(EX_USAGE);
 }
 int main(int argc, char **argv) {

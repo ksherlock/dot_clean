@@ -232,7 +232,6 @@ void mapped_file_base::close() {
 void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, size_t offset) {
 
 	int fd;
-	struct stat st;
 
 	int oflags = 0;
 
@@ -257,12 +256,15 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 	//defer([fd](){::close(fd); });
 	auto close_fd = make_unique_resource(fd, ::close);
 
-	if (::fstat(fd, &st) < 0) {
-		throw_error(errno);
+
+	if (length == -1) {
+
+		struct stat st;
+		if (::fstat(fd, &st) < 0) throw_error(errno);
+
+		length = st.st_size;
 	}
 
-
-	if (length == -1) length = st.st_size;
 
 	_data = ::mmap(0, length, 
 		flags == readonly ? PROT_READ : PROT_READ | PROT_WRITE, 

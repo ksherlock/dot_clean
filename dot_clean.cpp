@@ -14,6 +14,7 @@
 #include <err.h>
 
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <dirent.h>
 
 #include <arpa/inet.h>
@@ -25,7 +26,6 @@
 
 
 std::vector<std::string> unlink_list;
-std::vector<std::string> rmdir_list;
 
 
 bool _f = false;
@@ -84,17 +84,30 @@ private:
 
 void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
-	if (_v) fprintf(stdout, "%s\n", data.c_str());
+	struct stat rsrc_st;
+
+	if (_v) fprintf(stdout, "Merging %s & %s\n", rsrc.c_str(), data.c_str());
 
 	int fd = open(data.c_str(), O_RDONLY);
 	if (fd < 0) {
 
-		if (errno == ENOENT && _n) { unlink_list.push_back(rsrc); return; }
+		if (errno == ENOENT) {
+			if (_n) unlink_list.push_back(rsrc);
+			return;
+		}
 		throw_errno();
 	}
 	defer close_fd([fd]{close(fd); });
 
-	mapped_file mf(rsrc, mapped_file::priv);
+
+	if (stat(data.c_str(), &rsrc_st) < 0) throw_errno();
+	if (rsrc_st.st_size == 0) {
+		// mmapping a zero-length file throws EINVAL.
+		if (!_p) unlink_list.push_back(rsrc);
+		return;
+	}
+
+	mapped_file mf(rsrc, mapped_file::priv, rsrc_st.st_size);
 
 
 	if (mf.size() < sizeof(ASHeader)) throw_not_apple_double();
@@ -176,13 +189,21 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 	}
 
 
-
-
 	if (!_p) unlink_list.push_back(rsrc);
 
-} catch (std::exception &ex) {
+} catch (const std::exception &ex) {
 	_rv = 1;
-	fprintf(stderr, "%s : %s\n", data.c_str(), ex.what());
+	fprintf(stderr, "Merging %s failed: %s\n", rsrc.c_str(), ex.what());
+}
+
+void unlink_files(std::vector<std::string> &unlink_list) {
+
+	for (const auto &path : unlink_list) {
+		if (_v) fprintf(stdout, "Deleting %s\n", path.c_str());
+		int ok = unlink(path.c_str());
+		if (ok < 0) warn("unlink %s", path.c_str());
+	}
+	unlink_list.clear();
 }
 
 void one_dir(std::string dir) noexcept {
@@ -192,6 +213,7 @@ void one_dir(std::string dir) noexcept {
 
 	// check for .AppleDouble folder.
 
+	std::vector<std::string> dir_list;
 
 	if (dir.empty()) return;
 
@@ -210,24 +232,49 @@ void one_dir(std::string dir) noexcept {
 
 			one_file(dir + name, ad + name);
 		}
-		if (!_p) rmdir_list.push_back(ad); // delete it if empty.
 		closedir(dirp);
+
+		unlink_files(unlink_list);
+		if (!_p) {
+			// try to delete it...
+			if (_v) fprintf(stdout, "Deleting %s\n", ad.c_str());
+			int ok = rmdir(ad.c_str());
+			if (ok < 0) warn("rmdir %s", ad.c_str());
+		}
 	}
 
 
 	dirp = opendir(dir.c_str());
 	if (dirp) {
 		while ( (dp = readdir(dirp)) ) {
-			if (dp->d_name[0] != '.') continue;
-			if (dp->d_name[1] != '_') continue;
 
 			std::string name = dp->d_name;
-			one_file(dir + name.substr(2), dir + name);
+			if (name.length() > 2 && name[0] == '.' && name[1] == '_') {
+
+				one_file(dir + name.substr(2), dir + name);
+				continue;
+			}
+
+			if (!_f && name[0] != '.') {
+				std::string tmp = dir + name;
+				#ifdef DT_DIR
+				if (dp->d_type == DT_DIR) 
+					dir_list.push_back(tmp);
+				#else
+				struct stat st;
+				if (stat(tmp.c_str(), &st) == 0 && S_ISDIR(st.st_mode))
+					dir_list.push_back(tmp);
+				#endif
+			}
 		}
 		closedir(dirp);
 	} else {
 		warn("%s", dir.c_str());
 	}
+
+	unlink_files(unlink_list);
+
+	for (const auto &path : dir_list) one_dir(path);
 
 }
 

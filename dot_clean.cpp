@@ -43,6 +43,10 @@ void throw_damaged_file() {
 	throw std::runtime_error("File is damaged.");
 }
 
+void throw_not_apple_double() {
+	throw std::runtime_error("Not an Apple Double File");
+}
+
 void throw_eof() {
 	throw std::runtime_error("Unexpected end of file.");
 }
@@ -87,10 +91,89 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 		if (errno == ENOENT && _n) { unlink_list.push_back(rsrc); return; }
 		throw_errno();
 	}
-
 	defer close_fd([fd]{close(fd); });
 
 	mapped_file mf(rsrc, mapped_file::priv);
+
+
+	if (mf.size() < sizeof(ASHeader)) throw_not_apple_double();
+
+	ASHeader *header = (ASHeader *)mf.data();
+	header->magicNum = ntohl(header->magicNum);
+	header->versionNum = ntohl(header->versionNum);
+	header->numEntries = ntohs(header->numEntries);
+
+
+
+	if (header->magicNum != APPLEDOUBLE_CIGAM || header->versionNum != 0x00020000)
+		throw_not_apple_double();
+
+	if (header->numEntries * sizeof(ASEntry) + sizeof(ASHeader) > mf.size()) throw_eof();
+
+	ASEntry *begin = (ASEntry *)(mf.data() + sizeof(ASHeader));
+	ASEntry *end = &begin[header->numEntries];
+
+	std::for_each(begin, end, [&mf](ASEntry &e){
+		e.entryID = ntohl(e.entryID);
+		e.entryOffset = ntohl(e.entryOffset);
+		e.entryLength = ntohl(e.entryLength);
+
+		// and check for truncation.
+		if (!e.entryLength) return;
+		if (e.entryOffset > mf.size()) throw_eof();
+		if (e.entryOffset + e.entryLength > mf.size()) throw_eof();
+
+	});
+
+
+	for (auto iter = begin; iter != end; ++iter) {
+		const auto &e = *iter;
+
+		if (e.entryLength == 0) continue;
+		switch(e.entryID) {
+
+			#if 0
+			/* should not exist for apple double! */
+			case AS_DATA: {
+				ssize_t ok = write(fd, mf.data() + e.entryOffset, e.entryLength);
+				if (ok < 0) throw_errno();
+				//if (ok != e.entryLength) return -1;
+				break;
+			}
+			#endif
+			case AS_RESOURCE: {
+				#ifdef __sun__
+				int rfd = openat(fd, "com.apple.ResourceFork", O_XATTR | O_CREAT | O_TRUNC | O_WRONLY, 0666);
+				if (rfds < 0) throw_errno("com.apple.ResourceFork");
+				defer close_fd([rfd](){ close(rfd); });
+
+				ssize_t ok = write(rfd, mf.data() + e.entryOffset, e.entryLength);
+				if (ok < 0) throw_errno("com.apple.ResourceFork");
+				//if (ok != e.entryLength) return -1;
+				#endif
+				break;
+			}
+			case AS_FINDERINFO: {
+				if (e.entryLength != 32) {
+					fputs("Warning: Invalid Finder Info size.\n", stderr);
+					break;
+				}
+				#ifdef __sun__
+				int rfd = openat(fd, "com.apple.FinderInfo", O_XATTR | O_CREAT | O_TRUNC | O_WRONLY, 0666);
+				if (rfd < 0) throw_errno("com.apple.ResourceFork");
+				defer close_fd([rfd](){ close(rfd); });
+
+				ssize_t ok = write(rfd, mf.data() + e.entryOffset, e.entryLength);
+				if (ok < 0) throw_errno("com.apple.FinderInfo");
+				//if (ok != e.entryLength) return -1;
+				#endif
+				break;
+			}
+		}
+
+	}
+
+
 
 
 	if (!_p) unlink_list.push_back(rsrc);

@@ -144,7 +144,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 			case AS_RESOURCE: {
 				#ifdef __sun__
 				int rfd = openat(fd, "com.apple.ResourceFork", O_XATTR | O_CREAT | O_TRUNC | O_WRONLY, 0666);
-				if (rfds < 0) throw_errno("com.apple.ResourceFork");
+				if (rfd < 0) throw_errno("com.apple.ResourceFork");
 				defer close_fd([rfd](){ close(rfd); });
 
 				ssize_t ok = write(rfd, mf.data() + e.entryOffset, e.entryLength);

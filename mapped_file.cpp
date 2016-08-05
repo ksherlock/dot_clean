@@ -6,22 +6,6 @@
 #include "unique_resource.h"
 
 namespace {
-	class defer {
-	public:
-		typedef std::function<void()> FX;
-		defer() = default;
-
-		defer(FX fx) : _fx(fx) {}
-		defer(const defer &) = delete;
-		defer(defer &&) = default;
-		defer & operator=(const defer &) = delete;
-		defer & operator=(defer &&) = default;
-
-		void cancel() { _fx = nullptr;  }
-		~defer() { if (_fx) _fx(); }
-	private:
-		FX _fx;
-	};
 
 	void throw_error(int error) {
 		throw std::system_error(error, std::system_category());
@@ -31,8 +15,6 @@ namespace {
 	void throw_error(int error, const std::string &what) {
 		throw std::system_error(error, std::system_category(), what);
 	}
-
-
 
 }
 

@@ -155,7 +155,6 @@ typedef struct ASEntry ASEntry;
 #define AS_MSDOSINFO    12 /* MS-DOS file info, attributes, etc */
 #define AS_AFPNAME      13 /* Short name on AFP server */
 #define AS_AFPINFO      14 /* AFP file info, attrib., etc */
-
 #define AS_AFPDIRID     15 /* AFP directory ID */
 
 /* matrix of entry types and their usage:

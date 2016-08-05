@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <functional>
 #include <system_error>
+#include <utility>
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -23,6 +24,7 @@
 
 #include "applefile.h"
 #include "mapped_file.h"
+#include "defer.h"
 
 
 std::vector<std::string> unlink_list;
@@ -63,25 +65,6 @@ void throw_errno(const std::string &what) {
 }
 
 
-class defer {
-public:
-	typedef std::function<void()> FX;
-	defer() = default;
-
-	defer(FX fx) : _fx(fx) {}
-	defer(const defer &) = delete;
-	defer(defer &&) = default;
-	defer & operator=(const defer &) = delete;
-	defer & operator=(defer &&) = default;
-
-	void cancel() { _fx = nullptr;  }
-	~defer() { if (_fx) _fx(); }
-private:
-	FX _fx;
-};
-
-
-
 void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
 	struct stat rsrc_st;
@@ -119,8 +102,14 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
 
 
-	if (header->magicNum != APPLEDOUBLE_MAGIC || header->versionNum != 0x00020000)
+	if (header->magicNum != APPLEDOUBLE_MAGIC)
 		throw_not_apple_double();
+
+	// v 2 is a super set of v1. v1 had type 7 for os-specific info, since split into
+	// separate entries.
+	if (header->versionNum != 0x00010000 && header->versionNum != 0x00020000)
+		throw_not_apple_double();
+
 
 	if (header->numEntries * sizeof(ASEntry) + sizeof(ASHeader) > mf.size()) throw_eof();
 
@@ -139,11 +128,9 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
 	});
 
+	std::for_each(begin, end, [&mf,fd](ASEntry &e){
 
-	for (auto iter = begin; iter != end; ++iter) {
-		const auto &e = *iter;
-
-		if (e.entryLength == 0) continue;
+		if (e.entryLength == 0) return;
 		switch(e.entryID) {
 
 			#if 0
@@ -185,8 +172,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 				break;
 			}
 		}
-
-	}
+	});
 
 
 	if (!_p) unlink_list.push_back(rsrc);

@@ -56,12 +56,12 @@ void throw_eof() {
 
 
 void throw_errno() {
-	throw std::system_error(errno, std::system_category());
+	throw std::system_error(errno, std::generic_category());
 }
 
 
 void throw_errno(const std::string &what) {
-	throw std::system_error(errno, std::system_category(), what);
+	throw std::system_error(errno, std::generic_category(), what);
 }
 
 
@@ -152,6 +152,20 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 				if (ok < 0) throw_errno("com.apple.ResourceFork");
 				//if (ok != e.entryLength) return -1;
 				#endif
+
+				#ifdef _WIN32
+				std::string tmp = data + ":com.apple.ResourceFork";
+				int rfd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+				if (rfd < 0) throw_errno("com.apple.ResourceFork");
+				defer close_fd([rfd](){ close(rfd); });
+				int ok = write(rfd, mf.data() + e.entryOffset, e.entryLength);
+				if (ok < 0) throw_errno("com.apple.ResourceFork");
+				#endif
+
+				#ifdef ___linux____
+				int ok = fsetxattr(fd, "user.apple.ResourceFork", mf.data() + e.entryOffset, e.entryLength, 0);
+				if (ok < 0) throw_errno("user.apple.ResourceFork");
+				#endif
 				break;
 			}
 			case AS_FINDERINFO: {
@@ -169,6 +183,23 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 				if (ok < 0) throw_errno("com.apple.FinderInfo");
 				//if (ok != e.entryLength) return -1;
 				#endif
+
+				#ifdef _WIN32
+				std::string tmp = data + ":com.apple.FinderInfo";
+				int rfd = openat(tmp.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0666);
+				if (rfd < 0) throw_errno("com.apple.ResourceFork");
+				defer close_fd([rfd](){ close(rfd); });
+
+				int ok = write(rfd, mf.data() + e.entryOffset, 32);
+				if (ok < 0) throw_errno("com.apple.FinderInfo");
+				#endif
+
+				#ifdef __linux__
+				int ok = fsetxattr(fd, "user.apple.FinderInfo", mf.data() + e.entryOffset, 32, 0);
+				if (ok < 0) throw_errno("user.apple.FinderInfo");
+				#endif
+
+
 				break;
 			}
 		}

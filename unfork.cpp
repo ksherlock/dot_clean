@@ -25,12 +25,12 @@ void damaged_file() {
 }
 
 void throw_errno() {
-	throw std::system_error(errno, std::system_category());
+	throw std::system_error(errno, std::generic_category());
 }
 
 
 void throw_errno(const std::string &what) {
-	throw std::system_error(errno, std::system_category(), what);
+	throw std::system_error(errno, std::generic_category(), what);
 }
 
 

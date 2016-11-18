@@ -26,6 +26,9 @@
 #include "mapped_file.h"
 #include "defer.h"
 
+#ifdef __linux__
+#include <attr/xattr.h>
+#endif
 
 std::vector<std::string> unlink_list;
 
@@ -162,7 +165,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 				if (ok < 0) throw_errno("com.apple.ResourceFork");
 				#endif
 
-				#ifdef ___linux____
+				#ifdef __linux__
 				int ok = fsetxattr(fd, "user.apple.ResourceFork", mf.data() + e.entryOffset, e.entryLength, 0);
 				if (ok < 0) throw_errno("user.apple.ResourceFork");
 				#endif

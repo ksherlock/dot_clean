@@ -65,13 +65,12 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 		nullptr
 	);
 	if (fh == INVALID_HANDLE_VALUE) {
-		throw_error();
+		throw_error("CreateFile");
 	}
 
 	auto fh_close = make_unique_resource(fh, CloseHandle);
 
-
-	if (length == -1){
+	if (length == -1) {
 		LARGE_INTEGER file_size;
 		GetFileSizeEx(fh, &file_size);
 		length = file_size.QuadPart;
@@ -90,13 +89,13 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 		break;
 	case priv:
 		protect = PAGE_WRITECOPY;
-		access = FILE_MAP_WRITE;
+		access = FILE_MAP_COPY;
 		break;
 	}
 
 	mh = CreateFileMapping(fh, nullptr, protect, 0, 0, 0);
 	if (mh == INVALID_HANDLE_VALUE) {
-		throw_error();
+		throw_error("CreateFileMapping");
 	}
 
 	auto mh_close = make_unique_resource(mh, CloseHandle);
@@ -109,7 +108,7 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 		length, 
 		nullptr);
 	if (!_data) {
-		throw_error();
+		throw_error("MapViewOfFileEx");
 	}
 
 
@@ -146,7 +145,7 @@ void mapped_file_base::create(const path_type& p, size_t length) {
 		nullptr
 	);
 	if (fh == INVALID_HANDLE_VALUE) {
-		throw_error();
+		throw_error("CreateFile");
 	}
 
 	auto fh_close = make_unique_resource(fh, CloseHandle);
@@ -154,11 +153,11 @@ void mapped_file_base::create(const path_type& p, size_t length) {
 
 	file_size.QuadPart = length;
 	if (!SetFilePointerEx(fh, file_size, nullptr, FILE_BEGIN));
-	if (!SetEndOfFile(fh)) throw_error();
+	if (!SetEndOfFile(fh)) throw_error("SetEndOfFile");
 
 	mh = CreateFileMapping(fh, nullptr, protect, 0, 0, 0);
 	if (mh == INVALID_HANDLE_VALUE) {
-		throw_error();
+		throw_error("CreateFileMapping");
 	}
 
 	auto mh_close = make_unique_resource(mh, CloseHandle);
@@ -171,7 +170,7 @@ void mapped_file_base::create(const path_type& p, size_t length) {
 		nullptr);
 
 	if (!_data) {
-		throw_error();
+		throw_error("MapViewOfFileEx");
 	}
 
 	_file_handle = fh_close.release();
@@ -256,7 +255,7 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 
 	if (_data == MAP_FAILED) {
 		_data = nullptr;
-		throw_error(errno);
+		throw_error(errno, "mmap");
 	}
 
 	_fd = close_fd.release();
@@ -277,7 +276,7 @@ void mapped_file_base::create(const path_type& p, size_t length) {
 
 	fd = ::open(p.c_str(), O_RDWR | O_CREAT | O_TRUNC);
 	if (fd < 0) {
-		throw_error(errno);
+		throw_error(errno, "open");
 	}
 
 	//defer([fd](){::close(fd); });
@@ -286,7 +285,7 @@ void mapped_file_base::create(const path_type& p, size_t length) {
 
 
 	if (::ftruncate(fd, length) < 0) {
-		throw_error(errno);
+		throw_error(errno, "ftruncate");
 	}
 
 
@@ -297,7 +296,7 @@ void mapped_file_base::create(const path_type& p, size_t length) {
 
 	if (_data == MAP_FAILED) {
 		_data = nullptr;
-		throw_error(errno);
+		throw_error(errno, "mmap");
 	}
 
 	_fd = close_fd.release();

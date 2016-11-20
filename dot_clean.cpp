@@ -12,15 +12,24 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+#ifdef _WIN32
+#include "win.h"
+#else
+
 #include <err.h>
+#include <arpa/inet.h>
+#include <sysexits.h>
+
+#endif
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <dirent.h>
 
-#include <arpa/inet.h>
 
-#include <sysexits.h>
 
 #include "applefile.h"
 #include "mapped_file.h"
@@ -42,7 +51,7 @@ struct AFP_Info {
 	uint32_t prodos_aux_type;
 	uint8_t reserved[6];
 };
-#pragma pack pop
+#pragma pack(pop)
 
 void init_afp_info(AFP_Info &info) {
 	static_assert(sizeof(AFP_Info) == 60, "Incorrect AFP_Info size");
@@ -52,6 +61,11 @@ void init_afp_info(AFP_Info &info) {
 }
 
 #endif
+
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+
 
 std::vector<std::string> unlink_list;
 
@@ -97,19 +111,19 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
 	if (_v) fprintf(stdout, "Merging %s & %s\n", rsrc.c_str(), data.c_str());
 
-	int fd = open(data.c_str(), O_RDONLY);
+	int fd = open(data.c_str(), O_RDONLY | O_BINARY);
 	if (fd < 0) {
 
 		if (errno == ENOENT) {
 			if (_n) unlink_list.push_back(rsrc);
 			return;
 		}
-		throw_errno();
+		throw_errno("open");
 	}
 	defer close_fd([fd]{close(fd); });
 
 
-	if (stat(rsrc.c_str(), &rsrc_st) < 0) throw_errno();
+	if (stat(rsrc.c_str(), &rsrc_st) < 0) throw_errno("stat");
 	if (rsrc_st.st_size == 0) {
 		// mmapping a zero-length file throws EINVAL.
 		if (!_p) unlink_list.push_back(rsrc);
@@ -154,7 +168,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
 	});
 
-	std::for_each(begin, end, [&mf,fd](ASEntry &e){
+	std::for_each(begin, end, [&](ASEntry &e){
 
 		if (e.entryLength == 0) return;
 		switch(e.entryID) {
@@ -181,7 +195,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
 				#ifdef _WIN32
 				std::string tmp = data + ":AFP_Resource";
-				int rfd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+				int rfd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
 				if (rfd < 0) throw_errno("com.apple.ResourceFork");
 				defer close_fd([rfd](){ close(rfd); });
 				int ok = write(rfd, mf.data() + e.entryOffset, e.entryLength);
@@ -217,7 +231,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 				memcpy(info.finder_info, mf.data() + e.entryOffset, 32);
 
 				std::string tmp = data + ":AFP_AfpInfo";
-				int rfd = openat(tmp.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0666);
+				int rfd = open(tmp.c_str(), O_CREAT | O_TRUNC | O_WRONLY | O_BINARY, 0666);
 				if (rfd < 0) throw_errno("AFP_AfpInfo");
 				defer close_fd([rfd](){ close(rfd); });
 
@@ -232,6 +246,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
 
 				break;
+			}
 
 			case AS_PRODOSINFO: {
 				if (e.entryLength != 8) {

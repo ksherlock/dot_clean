@@ -30,6 +30,29 @@
 #include <attr/xattr.h>
 #endif
 
+#ifdef _WIN32
+#pragma pack(push, 2)
+struct AFP_Info {
+	uint32_t magic;
+	uint32_t version;
+	uint32_t file_id;
+	uint32_t backup_date;
+	uint8_t finder_info[32];
+	uint16_t prodos_file_type;
+	uint32_t prodos_aux_type;
+	uint8_t reserved[6];
+};
+#pragma pack pop
+
+void init_afp_info(AFP_Info &info) {
+	static_assert(sizeof(AFP_Info) == 60, "Incorrect AFP_Info size");
+	memset(&info, 0, sizeof(info));
+	info.magic = 0x00504641;
+	info.version = 0x00010000;
+}
+
+#endif
+
 std::vector<std::string> unlink_list;
 
 
@@ -157,20 +180,21 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 				#endif
 
 				#ifdef _WIN32
-				std::string tmp = data + ":com.apple.ResourceFork";
+				std::string tmp = data + ":AFP_Resource";
 				int rfd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
 				if (rfd < 0) throw_errno("com.apple.ResourceFork");
 				defer close_fd([rfd](){ close(rfd); });
 				int ok = write(rfd, mf.data() + e.entryOffset, e.entryLength);
-				if (ok < 0) throw_errno("com.apple.ResourceFork");
+				if (ok < 0) throw_errno("AFP_Resource");
 				#endif
 
 				#ifdef __linux__
-				int ok = fsetxattr(fd, "user.apple.ResourceFork", mf.data() + e.entryOffset, e.entryLength, 0);
-				if (ok < 0) throw_errno("user.apple.ResourceFork");
+				int ok = fsetxattr(fd, "user.com.apple.ResourceFork", mf.data() + e.entryOffset, e.entryLength, 0);
+				if (ok < 0) throw_errno("user.com.apple.ResourceFork");
 				#endif
 				break;
 			}
+
 			case AS_FINDERINFO: {
 				/* Apple now includes xattr w/ finder info */
 				if (e.entryLength < 32) {
@@ -188,21 +212,33 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 				#endif
 
 				#ifdef _WIN32
-				std::string tmp = data + ":com.apple.FinderInfo";
+				AFP_Info info;
+				init_afp_info(info);
+				memcpy(info.finder_info, mf.data() + e.entryOffset, 32);
+
+				std::string tmp = data + ":AFP_AfpInfo";
 				int rfd = openat(tmp.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0666);
-				if (rfd < 0) throw_errno("com.apple.ResourceFork");
+				if (rfd < 0) throw_errno("AFP_AfpInfo");
 				defer close_fd([rfd](){ close(rfd); });
 
-				int ok = write(rfd, mf.data() + e.entryOffset, 32);
-				if (ok < 0) throw_errno("com.apple.FinderInfo");
+				int ok = write(rfd, &info, sizeof(info));
+				if (ok < 0) throw_errno("AFP_AfpInfo");
 				#endif
 
 				#ifdef __linux__
-				int ok = fsetxattr(fd, "user.apple.FinderInfo", mf.data() + e.entryOffset, 32, 0);
-				if (ok < 0) throw_errno("user.apple.FinderInfo");
+				int ok = fsetxattr(fd, "user.com.apple.FinderInfo", mf.data() + e.entryOffset, 32, 0);
+				if (ok < 0) throw_errno("user.com.apple.FinderInfo");
 				#endif
 
 
+				break;
+
+			case AS_PRODOSINFO: {
+				if (e.entryLength != 8) {
+					fputs("Warning: Invalid ProDOS Info size.\n", stderr);
+					break;
+				}
+				// for _WIN32, add prodos data to AFP_AfpInfo?
 				break;
 			}
 		}

@@ -37,8 +37,6 @@
 
 /* REMINDER: the Motorola 680x0 is a big-endian architecture! */
 
-typedef uint32_t OSType;                  /* 32 bit field */
-
 /* In the QuickDraw coordinate plane, each coordinate is
  * -32767..32767. Each point is at the intersection of a
  * horizontal grid line and a vertical grid line.  Horizontal
@@ -62,8 +60,8 @@ typedef struct Point Point;
 
 struct FInfo /* Finder information */
 {
-    OSType fdType;      /* File type, 4 ASCII chars */
-    OSType fdCreator;   /* File's creator, 4 ASCII chars */
+    uint32_t fdType;      /* File type, 4 ASCII chars */
+    uint32_t fdCreator;   /* File's creator, 4 ASCII chars */
     uint16_t fdFlags;   /* Finder flag bits */
     Point  fdLocation;  /* file's location in folder */
     uint16_t fdFldr;    /* file 's folder (aka window) */

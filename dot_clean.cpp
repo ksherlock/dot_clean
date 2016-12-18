@@ -196,7 +196,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 				#ifdef _WIN32
 				std::string tmp = data + ":AFP_Resource";
 				int rfd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
-				if (rfd < 0) throw_errno("com.apple.ResourceFork");
+				if (rfd < 0) throw_errno("AFP_Resource");
 				defer close_fd([rfd](){ close(rfd); });
 				int ok = write(rfd, mf.data() + e.entryOffset, e.entryLength);
 				if (ok < 0) throw_errno("AFP_Resource");

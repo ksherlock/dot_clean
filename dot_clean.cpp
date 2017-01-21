@@ -58,6 +58,7 @@ void init_afp_info(AFP_Info &info) {
 	memset(&info, 0, sizeof(info));
 	info.magic = 0x00504641;
 	info.version = 0x00010000;
+	info.backup_date = 0x80000000;
 }
 
 #endif

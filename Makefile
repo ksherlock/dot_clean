@@ -1,4 +1,3 @@
-CXX = clang++
 LINK.o = $(LINK.cc)
 CXXFLAGS += -std=c++11 -g -Wall
 

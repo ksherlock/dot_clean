@@ -362,6 +362,11 @@ int afp_to_filetype(struct AFP_Info *info, uint16_t *file_type, uint32_t *aux_ty
 	return 0;
 }
 
+enum {
+	trust_prodos,
+	trust_hfs
+};
+
 void afp_synchronize(struct AFP_Info *info, int trust) {
 	// if ftype/auxtype is inconsistent between prodos and finder info, use
 	// prodos as source of truth.
@@ -422,7 +427,7 @@ bool finder_info_helper::read(int fd) {
 		return false;
 	}
 	if (!_afp.prodos_file_type && !_afp.prodos_aux_type)
-		afp_synchronize(&afp, trust_hfs);
+		afp_synchronize(&_afp, trust_hfs);
 #else
 	int ok = fi_read(fd, &_finder_info, sizeof(_finder_info));
 	if (ok < 0) {

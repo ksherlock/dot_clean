@@ -118,36 +118,45 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 		return;
 	}
 
-	mapped_file mf(rsrc, mapped_file::priv, rsrc_st.st_size);
+	mapped_file mf(rsrc, mapped_file::readonly, rsrc_st.st_size);
 
 
 	if (mf.size() < sizeof(ASHeader)) throw_not_apple_double();
 
-	ASHeader *header = (ASHeader *)mf.data();
-	header->magicNum = ntohl(header->magicNum);
-	header->versionNum = ntohl(header->versionNum);
-	header->numEntries = ntohs(header->numEntries);
+	ASHeader header;
+
+	{
+		ASHeader *tmp = (ASHeader *)mf.data();
+
+		header.magicNum = ntohl(tmp->magicNum);
+		header.versionNum = ntohl(tmp->versionNum);
+		header.numEntries = ntohs(tmp->numEntries);
+	}
 
 
 
-	if (header->magicNum != APPLEDOUBLE_MAGIC)
+
+
+
+	if (header.magicNum != APPLEDOUBLE_MAGIC)
 		throw_not_apple_double();
 
 	// v 2 is a super set of v1. v1 had type 7 for os-specific info, since split into
 	// separate entries.
-	if (header->versionNum != 0x00010000 && header->versionNum != 0x00020000)
+	if (header.versionNum != 0x00010000 && header.versionNum != 0x00020000)
 		throw_not_apple_double();
 
 
-	if (header->numEntries * sizeof(ASEntry) + sizeof(ASHeader) > mf.size()) throw_eof();
+	if (header.numEntries * sizeof(ASEntry) + sizeof(ASHeader) > mf.size()) throw_eof();
 
 	ASEntry *begin = (ASEntry *)(mf.data() + sizeof(ASHeader));
-	ASEntry *end = &begin[header->numEntries];
+	ASEntry *end = &begin[header.numEntries];
 
-	std::for_each(begin, end, [&mf](ASEntry &e){
-		e.entryID = ntohl(e.entryID);
-		e.entryOffset = ntohl(e.entryOffset);
-		e.entryLength = ntohl(e.entryLength);
+	std::for_each(begin, end, [&mf](const ASEntry &tmp){
+		ASEntry e;
+		e.entryID = ntohl(tmp.entryID);
+		e.entryOffset = ntohl(tmp.entryOffset);
+		e.entryLength = ntohl(tmp.entryLength);
 
 		// and check for truncation.
 		if (!e.entryLength) return;
@@ -162,7 +171,13 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
 	fi_ok = fi.open(data, false);
 
-	std::for_each(begin, end, [&](ASEntry &e){
+	std::for_each(begin, end, [&](const ASEntry &tmp){
+
+		ASEntry e;
+		e.entryID = ntohl(tmp.entryID);
+		e.entryOffset = ntohl(tmp.entryOffset);
+		e.entryLength = ntohl(tmp.entryLength);
+
 
 		if (e.entryLength == 0) return;
 		switch(e.entryID) {

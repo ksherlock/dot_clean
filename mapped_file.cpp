@@ -7,13 +7,9 @@
 
 namespace {
 
-	void throw_error(int error) {
-		throw std::system_error(error, std::system_category());
-	}
-
-
-	void throw_error(int error, const std::string &what) {
-		throw std::system_error(error, std::system_category(), what);
+	void set_or_throw_error(std::error_code *ec, int error, const std::string &what) {
+		if (ec) *ec = std::error_code(error, std::system_category());
+		else throw std::system_error(error, std::system_category(), what);
 	}
 
 }
@@ -23,18 +19,17 @@ namespace {
 
 namespace {
 
-	void throw_error() {
-		throw_error(GetLastError());
+	/*
+	 * allocating a new string could reset GetLastError() to 0.
+	 */
+	void set_or_throw_error(std::error_code *ec, const char *what) {
+		auto e = GetLastError();
+		set_or_throw_error(ec, e, what);
 	}
 
-	void throw_error(const char *what) {
-		int e = GetLastError();
-		throw_error(e, what);
-	}
-
-	void throw_error(const std::string &what) {
-		int e = GetLastError();
-		throw_error(e, what);
+	void set_or_throw_error(std::error_code *ec, const std::string &what) {
+		auto e = GetLastError();
+		set_or_throw_error(ec, e, what);
 	}
 
 }
@@ -49,8 +44,9 @@ void mapped_file_base::close() {
 	}
 }
 
-void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, size_t offset) {
+void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, size_t offset, std::error_code *ec) {
 
+	if (ec) ec->clear();
 
 	HANDLE fh;
 	HANDLE mh;
@@ -58,9 +54,7 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 	// length of 0 in CreateFileMapping / MapViewOfFile
 	// means map the entire file.
 
-	if (is_open()) {
-		throw std::runtime_error("mapped_file_base::open - file already open");
-	}
+	if (is_open()) close();
 
 	fh = CreateFile(p.c_str(), 
 		flags == readonly ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
@@ -70,17 +64,19 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 		flags == readonly ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL,
 		nullptr
 	);
-	if (fh == INVALID_HANDLE_VALUE) {
-		throw_error("CreateFile");
-	}
+	if (fh == INVALID_HANDLE_VALUE)
+		return set_or_throw_error(ec, "CreateFile");
 
 	auto fh_close = make_unique_resource(fh, CloseHandle);
+
 
 	if (length == -1) {
 		LARGE_INTEGER file_size;
 		GetFileSizeEx(fh, &file_size);
 		length = file_size.QuadPart;
 	}
+
+	if (length == 0) return;
 
 	DWORD protect = 0;
 	DWORD access = 0;
@@ -100,9 +96,8 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 	}
 
 	mh = CreateFileMapping(fh, nullptr, protect, 0, 0, 0);
-	if (mh == INVALID_HANDLE_VALUE) {
-		throw_error("CreateFileMapping");
-	}
+	if (mh == INVALID_HANDLE_VALUE)
+		return set_or_throw_error(ec, "CreateFileMapping");
 
 	auto mh_close = make_unique_resource(mh, CloseHandle);
 
@@ -113,9 +108,8 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 		(DWORD)offset, 
 		length, 
 		nullptr);
-	if (!_data) {
-		throw_error("MapViewOfFileEx");
-	}
+	if (!_data)
+		return set_or_throw_error(ec, "MapViewOfFileEx");
 
 
 	_file_handle = fh_close.release();
@@ -125,7 +119,9 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 }
 
 
-void mapped_file_base::create(const path_type& p, size_t length) {
+void mapped_file_base::create(const path_type& p, size_t length, std::error_code *ec) {
+
+	if (ec) ec->clear();
 
 	const size_t offset = 0;
 
@@ -137,10 +133,7 @@ void mapped_file_base::create(const path_type& p, size_t length) {
 	const DWORD access = FILE_MAP_WRITE;
 
 
-	if (is_open()) {
-		throw std::runtime_error("mapped_file_base::create - file already open");
-	}
-
+	if (is_open()) close();
 
 	fh = CreateFile(p.c_str(), 
 		GENERIC_READ | GENERIC_WRITE,
@@ -150,21 +143,23 @@ void mapped_file_base::create(const path_type& p, size_t length) {
 		FILE_ATTRIBUTE_NORMAL,
 		nullptr
 	);
-	if (fh == INVALID_HANDLE_VALUE) {
-		throw_error("CreateFile");
-	}
+	if (fh == INVALID_HANDLE_VALUE)
+		return set_or_throw_error(ec, "CreateFile");
 
 	auto fh_close = make_unique_resource(fh, CloseHandle);
 
+	if (length == 0) return;
 
 	file_size.QuadPart = length;
-	if (!SetFilePointerEx(fh, file_size, nullptr, FILE_BEGIN));
-	if (!SetEndOfFile(fh)) throw_error("SetEndOfFile");
+	if (!SetFilePointerEx(fh, file_size, nullptr, FILE_BEGIN))
+		return set_or_throw_error(ec, "SetFilePointerEx");
+
+	if (!SetEndOfFile(fh))
+		return set_or_throw_error(ec, "SetEndOfFile");
 
 	mh = CreateFileMapping(fh, nullptr, protect, 0, 0, 0);
-	if (mh == INVALID_HANDLE_VALUE) {
-		throw_error("CreateFileMapping");
-	}
+	if (mh == INVALID_HANDLE_VALUE)
+		return set_or_throw_error(ec, "CreateFileMapping");
 
 	auto mh_close = make_unique_resource(mh, CloseHandle);
 
@@ -175,9 +170,8 @@ void mapped_file_base::create(const path_type& p, size_t length) {
 		length, 
 		nullptr);
 
-	if (!_data) {
-		throw_error("MapViewOfFileEx");
-	}
+	if (!_data)
+		return set_or_throw_error(ec, "MapViewOfFileEx");
 
 	_file_handle = fh_close.release();
 	_map_handle = mh_close.release();
@@ -198,13 +192,15 @@ void mapped_file_base::create(const path_type& p, size_t length) {
 
 namespace {
 
-	void throw_error() {
-		throw_error(errno);
+
+	void set_or_throw_error(std::error_code *ec, const char *what) {
+		set_or_throw_error(ec, errno, what);
 	}
 
-	void throw_error(const std::string &what) {
-		throw_error(errno, what);
+	void set_or_throw_error(std::error_code *ec, const std::string &what) {
+		set_or_throw_error(ec, errno, what);
 	}
+
 
 }
 
@@ -217,15 +213,15 @@ void mapped_file_base::close() {
 }
 
 
-void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, size_t offset) {
+void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, size_t offset, std::error_code *ec) {
+
+	if (ec) ec->clear();
 
 	int fd;
 
 	int oflags = 0;
 
-	if (is_open()) {
-		throw std::runtime_error("mapped_file_base::open - file already open");
-	}
+	if (is_open()) close();
 
 	switch (flags) {
 	case readonly:
@@ -238,21 +234,23 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 
 	fd = ::open(p.c_str(), oflags);
 	if (fd < 0) {
-		throw_error(errno);
+		return set_or_throw_error(ec, "open");
 	}
 
-	//defer([fd](){::close(fd); });
 	auto close_fd = make_unique_resource(fd, ::close);
 
 
 	if (length == -1) {
-
 		struct stat st;
-		if (::fstat(fd, &st) < 0) throw_error(errno);
 
+		if (::fstat(fd, &st) < 0) {
+			set_or_throw_error(ec, "stat");
+			return;
+		}
 		length = st.st_size;
 	}
-	if (length == 0) return; // mmap w/ length of 0 is EINVAL.
+
+	if (length == 0) return;
 
 	_data = ::mmap(0, length, 
 		flags == readonly ? PROT_READ : PROT_READ | PROT_WRITE, 
@@ -261,7 +259,7 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 
 	if (_data == MAP_FAILED) {
 		_data = nullptr;
-		throw_error(errno, "mmap");
+		return set_or_throw_error(ec, "mmap");
 	}
 
 	_fd = close_fd.release();
@@ -269,29 +267,28 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 	_flags = flags;
 }
 
-void mapped_file_base::create(const path_type& p, size_t length) {
+void mapped_file_base::create(const path_type& p, size_t length, std::error_code *ec) {
+
+	if (ec) ec->clear();
 
 	int fd;
 	const size_t offset = 0;
 
-	if (is_open()) {
-		throw std::runtime_error("mapped_file_base::create - file already open");
-	}
+	if (is_open()) close();
 
-
-
-	fd = ::open(p.c_str(), O_RDWR | O_CREAT | O_TRUNC);
+	fd = ::open(p.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0666);
 	if (fd < 0) {
-		throw_error(errno, "open");
+		return set_or_throw_error(ec, "open");
 	}
 
-	//defer([fd](){::close(fd); });
 
 	auto close_fd = make_unique_resource(fd, ::close);
 
 
+	if (length == 0) return;
+
 	if (::ftruncate(fd, length) < 0) {
-		throw_error(errno, "ftruncate");
+		return set_or_throw_error(ec, "ftruncate");
 	}
 
 
@@ -302,7 +299,7 @@ void mapped_file_base::create(const path_type& p, size_t length) {
 
 	if (_data == MAP_FAILED) {
 		_data = nullptr;
-		throw_error(errno, "mmap");
+		return set_or_throw_error(ec, "mmap");
 	}
 
 	_fd = close_fd.release();

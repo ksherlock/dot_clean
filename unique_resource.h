@@ -18,7 +18,6 @@ public:
 	unique_resource(T t, D d): _pair(t,d), _active(true)
 	{}
 
-
 	~unique_resource() {
 		reset();
 	}
@@ -41,14 +40,14 @@ public:
 
 	void reset(T t) {
 		reset();
-		_pair.first = t;
 		_active = true;
+		_pair.first = t;
 	}
 
 	void reset(T t, D d) {
 		reset();
-		_pair = std::make_pair(t, d);
 		_active = true;
+		_pair = std::make_pair(t, d);
 	}
 
 	void reset() {
@@ -60,22 +59,16 @@ public:
 
 	T release() {
 		_active = false;
+		return _pair.first;;
+	}
+
+	T get() {
 		return _pair.first;
 	}
 
 	operator bool() const {
 		return _active; 
 	}
-
-
-	T& get() {
-		return _pair.first;
-	}
-
-	const T& get() const {
-		return _pair.first;
-	}
-
 
 	D& get_deleter() {
 		return _pair.second;

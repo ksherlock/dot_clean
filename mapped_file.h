@@ -96,7 +96,7 @@ public:
 	}
 
 	value_type *data() {
-		return _flags == readonly ? (value_type *)nullptr : (value_type *)_data;
+		return (value_type *)_data;
 	}
 
 	const_iterator cbegin() const {
@@ -119,11 +119,11 @@ public:
 
 
 	iterator begin() {
-		return _flags == readonly ? (iterator)nullptr : (iterator)_data;
+		return (iterator)_data;
 	}
 
 	iterator end() {
-		return _flags == readonly ? (iterator)nullptr : (iterator)_data + size();
+		return (iterator)_data + size();
 	}
 
 	mapmode flags() const {

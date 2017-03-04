@@ -27,8 +27,14 @@ namespace {
 		throw_error(GetLastError());
 	}
 
+	void throw_error(const char *what) {
+		int e = GetLastError();
+		throw_error(e, what);
+	}
+
 	void throw_error(const std::string &what) {
-		throw_error(GetLastError(), what);
+		int e = GetLastError();
+		throw_error(e, what);
 	}
 
 }

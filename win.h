@@ -1,10 +1,14 @@
 #ifdef __GNUC__
 #define ntohl __builtin_bswap32
 #define ntohs __builtin_bswap16 
+#define htonl __builtin_bswap32
+#define htons __builtin_bswap16 
 
 #else
 #define ntohl _byteswap_ulong
 #define ntohs _byteswap_ushort 
+#define htonl _byteswap_ulong
+#define htons _byteswap_ushort
 #endif
 
 #define EX_OK           0       /* successful termination */
@@ -30,9 +34,20 @@
 #define EX__MAX 78      /* maximum listed value */
 
 #define warn(...) do { \
+	char *cp = strerror(errno); \
 	fputs("dot_clean: ", stderr); \
 	fprintf(stderr, __VA_ARGS__); \
-	perror(NULL); \
+	fprintf(stderr,": %s", cp); \
 } while(0)
 
+#define warnx(...) do { \
+	fputs("dot_clean: ", stderr); \
+	fprintf(stderr, __VA_ARGS__); \
+} while(0)
 
+#define warnc(ec, ...) do { \
+	char *cp = strerror(ec); \
+	fputs("dot_clean: ", stderr); \
+	fprintf(stderr, __VA_ARGS__); \
+	fprintf(stderr,": %s", cp); \
+} while(0)

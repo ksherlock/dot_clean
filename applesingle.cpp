@@ -6,15 +6,21 @@
 
 #include <system_error>
 #include <string>
- #include <vector>
+#include <vector>
 
 #include <unistd.h>
-#include <sysexits.h>
 #include <stdio.h>
-#include <err.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+
+#ifdef _WIN32
+#include "win.h"
+#else
+#include <err.h>
+#include <sysexits.h>
+#endif
 
 #include "mapped_file.h"
 #include "xattr.h"
@@ -107,7 +113,7 @@ std::vector<uint8_t> read_resource_fork(const std::string &path, std::error_code
 		rv.resize(ok);
 		break;
 	}
-	close fd;
+	close(fd);
 	return rv;
 	#else
 

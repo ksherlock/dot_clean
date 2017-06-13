@@ -4,6 +4,11 @@ CXXFLAGS += -std=c++11 -g -Wall
 .PHONY: all
 all : dot_clean applesingle appledouble
 
+.PHONY: clean
+clean :
+	$(RM) *.o dot_clean applesingle appledouble
+
+
 dot_clean : dot_clean.o mapped_file.o finder_info_helper.o xattr.o
 
 applesingle : applesingle.o mapped_file.o finder_info_helper.o xattr.o

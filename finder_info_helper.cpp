@@ -31,7 +31,7 @@
 
 #if defined(_WIN32)
 #define _prodos_file_type _afp.prodos_file_type
-#define _prodos_aux_type _afp.prodos_file_type
+#define _prodos_aux_type _afp.prodos_aux_type
 #define _finder_info _afp.finder_info
 #endif
 

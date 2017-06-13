@@ -1,6 +1,18 @@
 LINK.o = $(LINK.cc)
 CXXFLAGS += -std=c++11 -g -Wall
 
+# static link if using mingw32 or mingw64 to make redistribution easier.
+# also add mingw directory.
+ifeq ($(MSYSTEM),MINGW32)
+        LDFLAGS += -static
+endif
+
+ifeq ($(MSYSTEM),MINGW64)
+        LDFLAGS += -static
+endif
+
+
+
 .PHONY: all
 all : dot_clean applesingle appledouble
 

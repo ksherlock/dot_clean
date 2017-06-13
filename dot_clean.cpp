@@ -63,7 +63,8 @@ bool _m = false;
 bool _n = false;
 bool _p = false;
 bool _s = false;
-bool _v = false;
+bool _d = false;
+unsigned _v = 0;
 
 int _rv = 0;
 
@@ -96,12 +97,27 @@ void throw_errno(const std::string &what) {
 void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
 	struct stat rsrc_st;
+	int ok;
 
 	if (_v) fprintf(stdout, "Merging %s & %s\n", rsrc.c_str(), data.c_str());
 
+	ok = stat(data.c_str(), &rsrc_st);
+	if (ok < 0) {
+		if (errno == ENOENT) {
+			if (_n) unlink_list.push_back(rsrc);
+			return;			
+		}
+		throw_errno("stat");
+	}
+
+	// don't try to do directories.
+	if (S_ISDIR(rsrc_st.st_mode)) {
+		if (!_p) unlink_list.push_back(rsrc);
+		return;
+	}
+
 	int fd = open(data.c_str(), O_RDONLY | O_BINARY);
 	if (fd < 0) {
-
 		if (errno == ENOENT) {
 			if (_n) unlink_list.push_back(rsrc);
 			return;
@@ -109,7 +125,6 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 		throw_errno("open");
 	}
 	defer close_fd([fd]{close(fd); });
-
 
 	if (stat(rsrc.c_str(), &rsrc_st) < 0) throw_errno("stat");
 	if (rsrc_st.st_size == 0) {
@@ -132,11 +147,6 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 		header.versionNum = ntohl(tmp->versionNum);
 		header.numEntries = ntohs(tmp->numEntries);
 	}
-
-
-
-
-
 
 	if (header.magicNum != APPLEDOUBLE_MAGIC)
 		throw_not_apple_double();
@@ -276,6 +286,10 @@ void one_dir(std::string dir) noexcept {
 	DIR *dirp;
 	dirent *dp;
 
+	if (_v >= 2) {
+		fprintf(stdout, "Processing %s\n", dir.c_str());
+	}
+
 	// check for .AppleDouble folder.
 
 	std::vector<std::string> dir_list;
@@ -291,9 +305,13 @@ void one_dir(std::string dir) noexcept {
 	if (dirp) {
 		while ( (dp = readdir(dirp)) ) {
 
-			if (dp->d_name[0] == '.') continue;
-
 			std::string name = dp->d_name;
+			if (name == ".DS_Store" && _d) {
+				unlink_list.push_back(ad + name);
+				continue;
+			}
+
+			if (name.front() == '.') continue;
 
 			one_file(dir + name, ad + name);
 		}
@@ -314,6 +332,14 @@ void one_dir(std::string dir) noexcept {
 		while ( (dp = readdir(dirp)) ) {
 
 			std::string name = dp->d_name;
+
+			if (_d) {
+				if (name == ".DS_Store" || name == "._.DS_Store") {
+					unlink_list.push_back(dir + name);
+					continue;
+				}
+			}
+
 			if (name.length() > 2 && name[0] == '.' && name[1] == '_') {
 
 				one_file(dir + name.substr(2), dir + name);
@@ -352,10 +378,11 @@ void help() {
 	fputs(
 		"Usage: dot_clean [-fhmnpsv] directory ...\n"
 		"\n"
+		"    -d Delete .DS_Store files.\n"
 		"    -f Disable recursion\n"
 		"    -h Display help\n"
 		"    -m Always delete apple double files\n"
-		"    -n Deleted apple double files if there is no matching native file\n"
+		"    -n Delete apple double files if there is no matching native file\n"
 		"    -p Preserve apple double file.\n"
 		"    -s Follow symbolic links.\n"
 		"    -v Be verbose\n",
@@ -368,15 +395,23 @@ int main(int argc, char **argv) {
 
 	int c;
 
-	while ((c = getopt(argc, argv, "fhmnpsv")) != -1) {
+	while ((c = getopt(argc, argv, "dfhmnpsvo:")) != -1) {
 		switch(c) {
+			case 'd': _d = true; break;
 			case 'f': _f = true; break;
 			case 'h': help(); break;
 			case 'm': _m = true; break;
 			case 'n': _n = true; break;
 			case 'p': _p = true; break;
 			case 's': _s = true; break;
-			case 'v': _v = true; break;
+			case 'v': _v++; break;
+			case 'o': {
+				if (strcmp(optarg, "-")) {
+					FILE *fp = freopen(optarg, "w", stdout);
+					if (!fp) warn("freopen %s", optarg);					
+				}
+				break;
+			}
 			case ':':
 			case '?':
 			default:

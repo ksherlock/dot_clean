@@ -32,6 +32,17 @@ namespace {
 		set_or_throw_error(ec, e, what);
 	}
 
+
+	template<class ...Args>
+	HANDLE CreateFileX(const std::string &s, Args... args) {
+		return CreateFileA(s.c_str(), std::forward<Args>(args)...);
+	}
+
+	template<class ...Args>
+	HANDLE CreateFileX(const std::wstring &s, Args... args) {
+		return CreateFileW(s.c_str(), std::forward<Args>(args)...);
+	}
+
 }
 
 void mapped_file_base::close() {
@@ -44,7 +55,8 @@ void mapped_file_base::close() {
 	}
 }
 
-void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, size_t offset, std::error_code *ec) {
+template<class T>
+void mapped_file_base::open_common(const T& p, mapmode flags, size_t length, size_t offset, std::error_code *ec) {
 
 	if (ec) ec->clear();
 
@@ -56,7 +68,7 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 
 	if (is_open()) close();
 
-	fh = CreateFile(p.c_str(), 
+	fh = CreateFileX(p, 
 		flags == readonly ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
 		FILE_SHARE_READ, 
 		nullptr,
@@ -73,7 +85,7 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 	if (length == -1) {
 		LARGE_INTEGER file_size;
 		GetFileSizeEx(fh, &file_size);
-		length = file_size.QuadPart;
+		length = (size_t)file_size.QuadPart;
 	}
 
 	if (length == 0) return;
@@ -102,10 +114,13 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 	auto mh_close = make_unique_resource(mh, CloseHandle);
 
 
+	ULARGE_INTEGER ll;
+	ll.QuadPart = offset;
+
 	_data = MapViewOfFileEx(mh, 
 		access, 
-		(DWORD)(offset >> 32), 
-		(DWORD)offset, 
+		ll.HighPart,
+		ll.LowPart,
 		length, 
 		nullptr);
 	if (!_data)
@@ -118,8 +133,19 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 	_flags = flags;
 }
 
+void mapped_file_base::open(const std::string &p, mapmode flags, size_t length, size_t offset, std::error_code *ec) {
+	open_common(p, flags, length, offset, ec);
+}
 
-void mapped_file_base::create(const path_type& p, size_t length, std::error_code *ec) {
+void mapped_file_base::open(const std::wstring &p, mapmode flags, size_t length, size_t offset, std::error_code *ec) {
+	open_common(p, flags, length, offset, ec);
+}
+
+
+
+
+template<class T>
+void mapped_file_base::create_common(const T& p, size_t length, std::error_code *ec) {
 
 	if (ec) ec->clear();
 
@@ -135,7 +161,7 @@ void mapped_file_base::create(const path_type& p, size_t length, std::error_code
 
 	if (is_open()) close();
 
-	fh = CreateFile(p.c_str(), 
+	fh = CreateFileX(p, 
 		GENERIC_READ | GENERIC_WRITE,
 		FILE_SHARE_READ, 
 		nullptr,
@@ -163,10 +189,13 @@ void mapped_file_base::create(const path_type& p, size_t length, std::error_code
 
 	auto mh_close = make_unique_resource(mh, CloseHandle);
 
+	ULARGE_INTEGER ll;
+	ll.QuadPart = offset;
+
 	_data = MapViewOfFileEx(mh, 
 		access, 
-		(DWORD)(offset >> 32), 
-		(DWORD)offset, 
+		ll.HighPart,
+		ll.LowPart,
 		length, 
 		nullptr);
 
@@ -180,7 +209,12 @@ void mapped_file_base::create(const path_type& p, size_t length, std::error_code
 	_flags = readwrite;
 }
 
-
+void mapped_file_base::create(const std::string &p, size_t length, std::error_code *ec) {
+	create_common(p, length, ec);
+}
+void mapped_file_base::create(const std::wstring &p, size_t length, std::error_code *ec) {
+	create_common(p, length, ec);
+}
 
 #else
 
@@ -213,7 +247,7 @@ void mapped_file_base::close() {
 }
 
 
-void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, size_t offset, std::error_code *ec) {
+void mapped_file_base::open(const std::string& p, mapmode flags, size_t length, size_t offset, std::error_code *ec) {
 
 	if (ec) ec->clear();
 
@@ -267,7 +301,7 @@ void mapped_file_base::open(const path_type& p, mapmode flags, size_t length, si
 	_flags = flags;
 }
 
-void mapped_file_base::create(const path_type& p, size_t length, std::error_code *ec) {
+void mapped_file_base::create(const std::string& p, size_t length, std::error_code *ec) {
 
 	if (ec) ec->clear();
 

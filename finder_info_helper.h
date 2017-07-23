@@ -2,6 +2,9 @@
 #include <stdint.h>
 #include <string>
 
+#include <system_error>
+
+
 #if defined(_WIN32)
 #pragma pack(push, 2)
 struct AFP_Info {
@@ -22,6 +25,12 @@ class finder_info_helper {
 
 public:
 
+	enum open_mode {
+		read_only = 1,
+		write_only = 2,
+		read_write = 3,
+	};
+
 	finder_info_helper();
 	~finder_info_helper();
 
@@ -33,26 +42,50 @@ public:
 
 
 	const uint8_t *finder_info() const {
-		#if defined(_WIN32)
+#if defined(_WIN32)
 		return _afp.finder_info;
-		#else
+#else
 		return _finder_info;
-		#endif
+#endif
 	}
 
 	uint8_t *finder_info() {
-		#if defined(_WIN32)
+#if defined(_WIN32)
 		return _afp.finder_info;
-		#else
+#else
 		return _finder_info;
-		#endif		
+#endif		
 	}
 
 
-	bool read(const std::string &fname);
-	bool write(const std::string &fname);
-	bool open(const std::string &fname, bool read_only = true);
-	bool write();
+	bool read(const std::string &fname, std::error_code &ec) {
+		return open(fname, read_only, ec);
+	}
+
+	bool write(const std::string &fname, std::error_code &ec);
+
+	bool open(const std::string &fname, open_mode perm, std::error_code &ec);
+	bool open(const std::string &fname, std::error_code &ec) {
+		return open(fname, read_only, ec);
+	}
+
+
+#if defined(_WIN32)
+	bool read(const std::wstring &pathName, std::error_code &ec) {
+		return open(pathName, read_only, ec);
+	}
+
+	bool write(const std::wstring &pathName, std::error_code &ec);
+
+	bool open(const std::wstring &fname, open_mode perm, std::error_code &ec);
+	bool open(const std::wstring &fname, std::error_code &ec) {
+		return open(fname, read_only, ec);
+	}
+
+#endif
+
+
+	bool write(std::error_code &ec);
 
 	uint32_t creator_type() const;
 	uint32_t file_type() const;
@@ -80,17 +113,26 @@ public:
 	void set_creator_type(uint32_t);
 
 	bool is_text() const;
+	bool is_binary() const;
 
 private:
 
-	bool write(int fd);
-	bool read(int fd);
+	void close();
 
-	int _fd = -1;
+#if defined(_WIN32)
+	bool write(void *handle, std::error_code &ec);
+	bool read(void *handle, std::error_code &ec);
+#else
+	bool write(int fd, std::error_code &ec);
+	bool read(int fd, std::error_code &ec);
+#endif
 
 	#if defined(_WIN32)
+	void *_fd = (void *)-1;
 	AFP_Info _afp;
 	#else
+	int _fd = -1;
+
 	uint16_t _prodos_file_type = 0;
 	uint32_t _prodos_aux_type = 0;
 	uint8_t _finder_info[32] = {};

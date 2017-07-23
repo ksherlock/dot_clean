@@ -1,15 +1,13 @@
 #ifndef __mapped_file_h__
 #define __mapped_file_h__
 
-#include <string>
-
 #include <cstddef>
 #include <system_error>
+#include <string>
 
 class mapped_file_base {
 public:
 
-	typedef std::string path_type;
 
 	enum mapmode { readonly, readwrite, priv };
 	enum createmode { truncate, exclusive };
@@ -33,8 +31,22 @@ protected:
 
 	void swap(mapped_file_base &rhs);
 
-	void open(const path_type& p, mapmode flags, size_t length, size_t offset, std::error_code *ec);
-	void create(const path_type &p, size_t new_size, std::error_code *ec); // always creates readwrite.
+	void open(const std::string &p, mapmode flags, size_t length, size_t offset, std::error_code *ec);
+	void create(const std::string &p, size_t new_size, std::error_code *ec); // always creates readwrite.
+
+#ifdef _WIN32
+
+	void open(const std::wstring &p, mapmode flags, size_t length, size_t offset, std::error_code *ec);
+	void create(const std::wstring &p, size_t new_size, std::error_code *ec); // always creates readwrite.
+
+	template<class S>
+	void open_common(const S &p, mapmode flags, size_t length, size_t offset, std::error_code *ec);
+
+	template<class S>
+	void create_common(const S &p, size_t new_size, std::error_code *ec); // always creates readwrite.
+
+#endif
+
 	void reset();
 
 
@@ -68,22 +80,22 @@ public:
 
 
 	mapped_file() = default;
-	mapped_file(const path_type& p, mapmode flags = readonly, size_t length = -1, size_t offset = 0) {
+	mapped_file(const std::string &p, mapmode flags = readonly, size_t length = -1, size_t offset = 0) {
 		open(p, flags, length, offset);
 	}
 
-	mapped_file(const path_type &p, std::error_code &ec) noexcept {
+	mapped_file(const std::string &p, std::error_code &ec) noexcept {
 		open(p, readonly, -1, 0, ec);
 	}
-	mapped_file(const path_type &p, mapmode flags, std::error_code &ec) noexcept {
+	mapped_file(const std::string &p, mapmode flags, std::error_code &ec) noexcept {
 		open(p, flags, -1, 0, ec);
 	}
 
-	mapped_file(const path_type &p, mapmode flags, size_t length, std::error_code &ec) noexcept {
+	mapped_file(const std::string &p, mapmode flags, size_t length, std::error_code &ec) noexcept {
 		open(p, flags, length, 0, ec);
 	}
 
-	mapped_file(const path_type &p, mapmode flags, size_t length, size_t offset, std::error_code &ec) noexcept {
+	mapped_file(const std::string &p, mapmode flags, size_t length, size_t offset, std::error_code &ec) noexcept {
 		open(p, flags, length, offset, ec);
 	}
 
@@ -95,30 +107,56 @@ public:
 	mapped_file &operator=(const mapped_file &) = delete;
 
 
-	void open(const path_type& p, mapmode flags, size_t length = -1, size_t offset = 0) {
+	void open(const std::string &p, mapmode flags, size_t length = -1, size_t offset = 0) {
 		base::open(p, flags, length, offset, nullptr);
 	}
-
-	void open(const path_type &p, std::error_code &ec) noexcept {
+	void open(const std::string &p, std::error_code &ec) noexcept {
 		base::open(p, readonly, -1, 0, &ec);
 	}
-	void open(const path_type &p, mapmode flags, std::error_code &ec) noexcept {
+	void open(const std::string &p, mapmode flags, std::error_code &ec) noexcept {
 		base::open(p, flags, -1, 0, &ec);
 	}
-	void open(const path_type &p, mapmode flags, size_t length, std::error_code &ec) noexcept {
+	void open(const std::string &p, mapmode flags, size_t length, std::error_code &ec) noexcept {
 		base::open(p, flags, length, 0, &ec);
 	}
-	void open(const path_type &p, mapmode flags, size_t length, size_t offset, std::error_code &ec) noexcept {
+	void open(const std::string &p, mapmode flags, size_t length, size_t offset, std::error_code &ec) noexcept {
 		base::open(p, flags, length, offset, &ec);
 	}
 
-	void create(const path_type &p, size_t size) {
-		base::create(p, size, nullptr);
+#ifdef _WIN32
+	void open(const std::wstring &p, mapmode flags, size_t length = -1, size_t offset = 0) {
+		base::open(p, flags, length, offset, nullptr);
+	}
+	void open(const std::wstring &p, std::error_code &ec) noexcept {
+		base::open(p, readonly, -1, 0, &ec);
+	}
+	void open(const std::wstring &p, mapmode flags, std::error_code &ec) noexcept {
+		base::open(p, flags, -1, 0, &ec);
+	}
+	void open(const std::wstring &p, mapmode flags, size_t length, std::error_code &ec) noexcept {
+		base::open(p, flags, length, 0, &ec);
+	}
+	void open(const std::wstring &p, mapmode flags, size_t length, size_t offset, std::error_code &ec) noexcept {
+		base::open(p, flags, length, offset, &ec);
 	}
 
-	void create(const path_type &p, size_t size, std::error_code &ec)  noexcept {
+#endif
+
+	void create(const std::string &p, size_t size) {
+		base::create(p, size, nullptr);
+	}
+	void create(const std::string &p, size_t size, std::error_code &ec)  noexcept {
 		base::create(p, size, &ec);
 	}
+
+#ifdef _WIN32
+	void create(const std::wstring &p, size_t size) {
+		base::create(p, size, nullptr);
+	}
+	void create(const std::wstring &p, size_t size, std::error_code &ec)  noexcept {
+		base::create(p, size, &ec);
+	}
+#endif
 
 
 	const value_type *data() const {

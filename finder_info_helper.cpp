@@ -8,19 +8,28 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include "xattr.h"
-
 #if defined(__APPLE__)
 #include <sys/xattr.h>
 #endif
 
 #if defined(__linux__)
+#include <sys/xattr.h>
 #define XATTR_FINDERINFO_NAME "user.com.apple.FinderInfo"
 #define XATTR_RESOURCEFORK_NAME "user.com.apple.ResourceFork"
 #endif
 
+#if defined(__FreeBSD__)
+#include <sys/types.h>
+#include <sys/extattr.h>
+#endif
+
+#if defined(_AIX)
+#include <sys/ea.h>
+#endif
+
 
 #if defined (_WIN32)
+#include <windows.h>
 #define XATTR_FINDERINFO_NAME "AFP_AfpInfo"
 #endif
 
@@ -198,24 +207,241 @@ namespace {
 	}
 
 
-	int fi_open(const std::string &path, bool read_only) {
+	template<class T>
+	T _(const T t, std::error_code &ec) {
+		if (t < 0) ec = std::error_code(errno, std::generic_category());
+		return t;
+	}
 
-	#if defined(__sun__)
-		if (read_only) return attropen(path.c_str(), XATTR_FINDERINFO_NAME, O_RDONLY);
-		else return attropen(path.c_str(), XATTR_FINDERINFO_NAME, O_RDWR | O_CREAT, 0666);
-	#elif defined(_WIN32)
+	/*
+	 * extended attributes functions.
+	 */
+	#if defined(__APPLE__)
+	ssize_t size_xattr(int fd, const char *xattr) {
+		return fgetxattr(fd, xattr, NULL, 0, 0, 0);
+	}
+
+	ssize_t read_xattr(int fd, const char *xattr, void *buffer, size_t size) {
+		return fgetxattr(fd, xattr, buffer, size, 0, 0);
+	}
+
+	ssize_t write_xattr(int fd, const char *xattr, const void *buffer, size_t size) {
+		if (fsetxattr(fd, xattr, buffer, size, 0, 0) < 0) return -1;
+		return size;
+	}
+
+	int remove_xattr(int fd, const char *xattr) {
+		return fremovexattr(fd, xattr, 0);
+	}
+
+	#elif defined(__linux__) 
+	ssize_t size_xattr(int fd, const char *xattr) {
+		return fgetxattr(fd, xattr, NULL, 0);
+	}
+
+	ssize_t read_xattr(int fd, const char *xattr, void *buffer, size_t size) {
+		return fgetxattr(fd, xattr, buffer, size);
+	}
+
+	ssize_t write_xattr(int fd, const char *xattr, const void *buffer, size_t size) {
+		if (fsetxattr(fd, xattr, buffer, size, 0) < 0) return -1;
+		return size;
+	}
+
+	int remove_xattr(int fd, const char *xattr) {
+		return fremovexattr(fd, xattr);
+	}
+
+	#elif defined(__FreeBSD__)
+	ssize_t size_xattr(int fd, const char *xattr) {
+		return extattr_get_fd(fd, EXTATTR_NAMESPACE_USER, xattr, NULL, 0);
+	}
+
+	ssize_t read_xattr(int fd, const char *xattr, void *buffer, size_t size) {
+		return extattr_get_fd(fd, EXTATTR_NAMESPACE_USER, xattr, buffer, size);
+	}
+
+	ssize_t write_xattr(int fd, const char *xattr, const void *buffer, size_t size) {
+		return extattr_set_fd(fd, EXTATTR_NAMESPACE_USER, xattr, buffer, size);
+	}
+
+	int remove_xattr(int fd, const char *xattr) {
+		return extattr_delete_fd(fd, EXTATTR_NAMESPACE_USER, xattr);
+	}
+
+	#elif defined(_AIX)
+	ssize_t size_xattr(int fd, const char *xattr) {
+		/*
+		struct stat64x st;
+		if (fstatea(fd, xattr, &st) < 0) return -1;
+		return st.st_size;
+		*/
+		return fgetea(fd, xattr, NULL, 0);
+	}
+
+	ssize_t read_xattr(int fd, const char *xattr, void *buffer, size_t size) {
+		return fgetea(fd, xattr, buffer, size);
+	}
+
+	ssize_t write_xattr(int fd, const char *xattr, const void *buffer, size_t size) {
+		if (fsetea(fd, xattr, buffer, size, 0) < 0) return -1;
+		return size;
+	}
+
+	int remove_xattr(int fd, const char *xattr) {
+		return fremoveea(fd, xattr);
+	}
+
+	#endif
+
+
+	void set_or_throw_error(std::error_code *ec, int error, const std::string &what) {
+		if (ec) *ec = std::error_code(error, std::system_category());
+		else throw std::system_error(error, std::system_category(), what);
+	}
+
+
+
+
+#if defined(_WIN32)
+
+	/*
+	* allocating a new string could reset GetLastError() to 0.
+	*/
+	void set_or_throw_error(std::error_code *ec, const char *what) {
+		auto e = GetLastError();
+		set_or_throw_error(ec, e, what);
+	}
+
+	void set_or_throw_error(std::error_code *ec, const std::string &what) {
+		auto e = GetLastError();
+		set_or_throw_error(ec, e, what);
+	}
+
+	template<class ...Args>
+	HANDLE CreateFileX(const std::string &s, Args... args) {
+		return CreateFileA(s.c_str(), std::forward<Args>(args)...);
+	}
+
+	template<class ...Args>
+	HANDLE CreateFileX(const std::wstring &s, Args... args) {
+		return CreateFileW(s.c_str(), std::forward<Args>(args)...);
+	}
+
+	void fi_close(void *fd) {
+		CloseHandle(fd);
+	}
+
+	void *fi_open(const std::string &path, int perm, std::error_code &ec) {
+
+		ec.clear();
+
 		std::string s(path);
 		s.append(":" XATTR_FINDERINFO_NAME);
-		if (read_only) return open(s.c_str(), O_RDONLY | O_BINARY);
-		else return open(s.c_str(), O_RDWR | O_CREAT | O_BINARY, 0666);
-	#else
 
+		HANDLE fh;
+		bool ro = perm == 1;
+
+		fh = CreateFileX(s, 
+				ro ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
+				FILE_SHARE_READ, 
+				nullptr, 
+				ro ? OPEN_EXISTING : OPEN_ALWAYS,
+				ro ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL,
+				nullptr);
+
+		if (fh == INVALID_HANDLE_VALUE)
+			set_or_throw_error(&ec, "CreateFile");
+
+		return fh;
+	}
+
+	void *fi_open(const std::wstring &path, int perm, std::error_code &ec) {
+
+		ec.clear();
+
+		std::wstring s(path);
+		s.append(L":" XATTR_FINDERINFO_NAME);
+
+		HANDLE fh;
+		bool ro = perm == 1;
+
+		fh = CreateFileX(s,
+			ro ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
+			FILE_SHARE_READ,
+			nullptr,
+			ro ? OPEN_EXISTING : OPEN_ALWAYS,
+			ro ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL,
+			nullptr);
+
+		if (fh == INVALID_HANDLE_VALUE)
+			set_or_throw_error(&ec, "CreateFile");
+
+		return fh;
+	}
+
+	int fi_write(void *handle, const void *data, int length, std::error_code &ec) {
+
+		ec.clear();
+		DWORD rv = 0;
+		BOOL ok;
+
+		LARGE_INTEGER zero = { 0 };
+
+		ok = SetFilePointerEx(handle, zero, nullptr, FILE_BEGIN);
+		if (!ok) {
+			set_or_throw_error(&ec, "SetFilePointerEx");
+			return 0;
+		}
+		ok = WriteFile(handle, data, length, &rv, nullptr);
+		if (!ok) {
+			set_or_throw_error(&ec, "WriteFile");
+			return 0;
+		}
+		return rv;
+	}
+
+	int fi_read(void *handle, void *data, int length, std::error_code &ec) {
+
+		ec.clear();
+		DWORD rv = 0;
+		BOOL ok;
+		LARGE_INTEGER zero = { 0 };
+
+		ok = SetFilePointerEx(handle, zero, nullptr, FILE_BEGIN);
+		if (!ok) {
+			set_or_throw_error(&ec, "SetFilePointerEx");
+			return 0;
+		}
+		ok = ReadFile(handle, data, length, &rv, nullptr);
+		if (!ok) {
+			set_or_throw_error(&ec, "ReadFile");
+			return 0;
+		}
+		return rv;
+	}
+
+#else
+
+	void fi_close(int fd) {
+		close(fd);
+	}
+
+	int fi_open(const std::string &path, int perm, std::error_code &ec) {
+
+	#if defined(__sun__)
+		if (perm == 1) return attropen(path.c_str(), XATTR_FINDERINFO_NAME, O_RDONLY);
+		else return attropen(path.c_str(), XATTR_FINDERINFO_NAME, O_RDWR | O_CREAT, 0666);
+	#else
+		// linux needs to open as read/write to write it?
+		//return open(path.c_str(), read_only ? O_RDONLY : O_RDWR);
 		return open(path.c_str(), O_RDONLY);
 	#endif
 	}
 
-	int fi_write(int fd, const void *data, int length) {
-		#if defined(__sun__) || defined(_WIN32)
+
+	int fi_write(int fd, const void *data, int length, std::error_code &ec) {
+		#if defined(__sun__)
 			lseek(fd, 0, SEEK_SET);
 			return write(fd, data, length);
 		#else
@@ -223,14 +449,17 @@ namespace {
 		#endif
 	}
 
-	int fi_read(int fd, void *data, int length) {
-		#if defined(__sun__) || defined(_WIN32)
+	int fi_read(int fd, void *data, int length, std::error_code &ec) {
+		#if defined(__sun__)
 			lseek(fd, 0, SEEK_SET);
 			return read(fd, data, length);
 		#else
 			return read_xattr(fd, XATTR_FINDERINFO_NAME, data, length);
 		#endif
 	}
+
+#endif
+
 
 #if defined(_WIN32)
 void afp_init(struct AFP_Info *info) {
@@ -274,10 +503,12 @@ enum {
 void afp_synchronize(struct AFP_Info *info, int trust) {
 	// if ftype/auxtype is inconsistent between prodos and finder info, use
 	// prodos as source of truth.
-	uint16_t f;
-	uint32_t a;
-	if (finder_info_to_filetype(info->finder_info, &f, &a) != 0) return;
-	if (f == info->prodos_file_type && a == info->prodos_aux_type) return;
+	uint16_t f = 0;
+	uint32_t a = 0;
+	if (finder_info_to_filetype(info->finder_info, &f, &a)) {
+		if (f == info->prodos_file_type && a == info->prodos_aux_type) return;
+	}
+	
 	if (trust == trust_prodos)
 		file_type_to_finder_info(info->finder_info, info->prodos_file_type, info->prodos_aux_type);
 	else {
@@ -300,71 +531,150 @@ finder_info_helper::finder_info_helper() {
 #endif
 }
 
-finder_info_helper::~finder_info_helper() {
+void finder_info_helper::close() {
+#if _WIN32
+	if (_fd != INVALID_HANDLE_VALUE) CloseHandle(_fd);
+	_fd = INVALID_HANDLE_VALUE;
+#else
 	if (_fd >= 0) close(_fd);
+	_fd = -1;
+#endif
+
+}
+finder_info_helper::~finder_info_helper() {
+	close();
 }
 
-bool finder_info_helper::open(const std::string &name, bool read_only) {
+bool finder_info_helper::open(const std::string &name, open_mode perm, std::error_code &ec) {
 
-	if (_fd >= 0) {
-		close(_fd);
-		_fd = -1;
+	ec.clear();
+
+	close();
+
+	if (perm < 1 || perm > 3) {
+		ec = std::make_error_code(std::errc::invalid_argument);
+		return false;
 	}
-	int fd = fi_open(name, read_only);
-	if (fd < 0) return false;
 
-	int ok = read(fd);
-	// if write mode, it's ok if finder info doesn't exist (yet).
-	if (!read_only && !ok) ok = true;
+	auto fd = fi_open(name, perm, ec);
+	if (ec) return false;
 
-	if (read_only) close(fd);
-	else _fd = fd;
+	// win32 should read even if write-only.
+	bool ok = read(_fd, ec);
 
-	return ok;
+	if (perm == read_only) {
+		fi_close(fd);
+		return ok;
+	}
+
+	// write mode, so it's ok if it doesn't exist.
+	if (!ok) ec.clear();
+	_fd = fd;
+	return true;
+}
+#if _WIN32
+
+bool finder_info_helper::open(const std::wstring &name, open_mode perm, std::error_code &ec) {
+
+	ec.clear();
+
+	close();
+
+	if (perm < 1 || perm > 3) {
+		ec = std::make_error_code(std::errc::invalid_argument);
+		return false;
+	}
+
+	auto fd = fi_open(name, perm, ec);
+	if (ec) return false;
+
+	// win32 should read even if write-only.
+	bool ok = read(_fd, ec);
+
+	if (perm == read_only) {
+		fi_close(fd);
+		return ok;
+	}
+
+	// write mode, so it's ok if it doesn't exist.
+	if (!ok) ec.clear();
+	_fd = fd;
+	return true;
 }
 
-bool finder_info_helper::read(int fd) {
-#if defined(_WIN32)
-	int ok = fi_read(fd, &_afp, sizeof(_afp));
+bool finder_info_helper::read(void *fd, std::error_code &ec) {
+
+	int ok = fi_read(fd, &_afp, sizeof(_afp), ec);
+	if (ec) {
+		afp_init(&_afp);
+		return false;
+	}
 	if (ok < sizeof(_afp) || !afp_verify(&_afp)) {
+		ec = std::make_error_code(std::errc::illegal_byte_sequence); // close enough!
 		afp_init(&_afp);
 		return false;
 	}
 	if (!_afp.prodos_file_type && !_afp.prodos_aux_type)
 		afp_synchronize(&_afp, trust_hfs);
+
+	return true;
+}
+
+bool finder_info_helper::write(void *fd, std::error_code &ec) {
+	return fi_write(fd, &_afp, sizeof(_afp), ec) == sizeof(_afp);
+}
+
 #else
-	int ok = fi_read(fd, &_finder_info, sizeof(_finder_info));
+
+bool finder_info_helper::read(int fd, std::error_code &ec) {
+
+	int ok = fi_read(fd, &_finder_info, sizeof(_finder_info), ec);
 	if (ok < 0) {
 		memset(&_finder_info, 0, sizeof(_finder_info));
 		return false;
 	}
 	finder_info_to_filetype(_finder_info, &_prodos_file_type, &_prodos_aux_type);
-#endif
 	return true;
 }
 
-bool finder_info_helper::write(int fd) {
-#if defined(_WIN32)
-	return fi_write(fd, &_afp, sizeof(_afp));
-#else
-	return fi_write(fd, &_finder_info, sizeof(_finder_info));
+bool finder_info_helper::write(int fd, std::error_code &ec) {
+	return fi_write(fd, &_finder_info, sizeof(_finder_info), ec) == sizeof(_finder_info);
+}
+
 #endif
+
+bool finder_info_helper::write(std::error_code &ec) {
+	ec.clear();
+	return write(_fd, ec);
 }
 
-bool finder_info_helper::write() {
-	return write(_fd);
-}
 
+bool finder_info_helper::write(const std::string &name, std::error_code &ec) {
+	ec.clear();
+	auto fd = fi_open(name, write_only, ec);
 
-bool finder_info_helper::write(const std::string &name) {
-	int fd = fi_open(name, false);
-	if (fd < 0) return false;
-	bool ok = write(fd);
-	close(fd);
+	if (ec)
+		return false;
+
+	bool ok = write(fd, ec);
+	fi_close(fd);
 	return ok;
 }
 
+#ifdef _WIN32
+bool finder_info_helper::write(const std::wstring &name, std::error_code &ec) {
+	ec.clear();
+	auto fd = fi_open(name, write_only, ec);
 
+	if (ec)
+		return false;
+
+	bool ok = write(fd, ec);
+	fi_close(fd);
+	return ok;
+}
+
+#endif
 
 void finder_info_helper::set_prodos_file_type(uint16_t ftype, uint32_t atype) {
 	_prodos_file_type = ftype;
@@ -384,6 +694,15 @@ bool finder_info_helper::is_text() const {
 
 	return false;
 }
+
+bool finder_info_helper::is_binary() const {
+	if (is_text()) return false;
+	if (_prodos_file_type || _prodos_aux_type) return true;
+
+	if (memcmp(_finder_info, "\x00\x00\x00\x00\x00\x00\x00\x00", 8) == 0) return false;
+	return true;
+}
+
 
 
 uint32_t finder_info_helper::file_type() const {

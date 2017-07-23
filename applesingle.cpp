@@ -28,6 +28,9 @@
 
 #include "applefile.h"
 
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
 
 #if defined(__linux__)
 #define XATTR_RESOURCEFORK_NAME "user.com.apple.ResourceFork"
@@ -78,12 +81,12 @@ std::vector<uint8_t> read_resource_fork(const std::string &path, std::error_code
 	struct stat st;
 
 	#if defined(__sun__)
-	fd = attropen(path.c_str(), XATTR_RESOURCEFORK_NAME, O_RDONLY);
+	fd = attropen(path.c_str(), XATTR_RESOURCEFORK_NAME, O_RDONLY | O_BINARY);
 	#else
 	std::string p(path);
 	p += ":" XATTR_RESOURCEFORK_NAME;
 
-	fd = open(p.c_str(), O_RDONLY);
+	fd = open(p.c_str(), O_RDONLY | O_BINARY);
 	#endif
 	if (fd < 0) {
 		ec = std::error_code(errno, std::generic_category());
@@ -117,7 +120,7 @@ std::vector<uint8_t> read_resource_fork(const std::string &path, std::error_code
 	return rv;
 	#else
 
-	int fd = open(path.c_str(), O_RDONLY);
+	int fd = open(path.c_str(), O_RDONLY | O_BINARY);
 	if (fd < 0) {
 		ec = std::error_code(errno, std::generic_category());
 		return rv;
@@ -127,8 +130,11 @@ std::vector<uint8_t> read_resource_fork(const std::string &path, std::error_code
 		ssize_t size = size_xattr(fd, XATTR_RESOURCEFORK_NAME);
 		if (size < 0) {
 			if (errno == EINTR) continue;
-			if (errno != ENOATTR)
-				ec = std::error_code(errno, std::generic_category());
+			if (errno == ENOATTR) {
+				rv.clear();
+				break;
+			}
+			ec = std::error_code(errno, std::generic_category());
 			close(fd);
 			return rv;
 		}
@@ -138,6 +144,10 @@ std::vector<uint8_t> read_resource_fork(const std::string &path, std::error_code
 		ssize_t rsize = read_xattr(fd, XATTR_RESOURCEFORK_NAME, rv.data(), size);
 		if (rsize < 0) {
 			if (errno == ERANGE || errno == EINTR) continue; // try again.
+			if (errno == ENOATTR) {
+				rv.clear();
+				break;
+			}
 			ec = std::error_code(errno, std::generic_category());
 			rv.clear();
 			break;
@@ -210,13 +220,14 @@ void one_file(const std::string &infile, const std::string &outfile) {
 	std::error_code ec;
 
 	finder_info_helper fi;
-	bool fi_ok = fi.open(infile);
+
+	bool fi_ok = fi.open(infile, ec);
 
 
 	// ENOATTR is ok... but that's not an errc...
 	std::vector<uint8_t> resource = read_resource_fork(infile, ec);
 
-	if (ec && ec.value() != ENOATTR) {
+	if (ec) {
 		warnc(ec.value(), "%s resource fork\n", infile.c_str());
 		return;
 	}
@@ -230,7 +241,7 @@ void one_file(const std::string &infile, const std::string &outfile) {
 	if (fi_ok) count++;
 
 
-	int fd = open(outfile.c_str(), O_WRONLY | O_CREAT, 0666);
+	int fd = open(outfile.c_str(), O_WRONLY | O_CREAT | O_BINARY, 0666);
 	memset(&head, 0, sizeof(head));
 	head.magicNum = htonl(APPLESINGLE_MAGIC);
 	head.versionNum = htonl(0x00020000);

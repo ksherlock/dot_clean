@@ -267,10 +267,11 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 	});
 
 	finder_info_helper fi;
-	bool fi_ok = false;
+	std::error_code ec;
 	bool update_fi = false;
+	bool fi_ok = false;
 
-	fi_ok = fi.open(data, false);
+	fi_ok = fi.open(data, finder_info_helper::read_write, ec);
 
 	std::for_each(begin, end, [&](const ASEntry &tmp){
 
@@ -320,7 +321,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 	});
 
 	if (update_fi) {
-		if (!fi.write()) {
+		if (!fi.write(ec)) {
 			throw_errno("com.apple.FinderInfo");
 		}
 	}

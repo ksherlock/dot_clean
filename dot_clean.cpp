@@ -94,6 +94,97 @@ void throw_errno(const std::string &what) {
 }
 
 
+void write_resource_fork(const std::string &parent_path, int parent_fd, void *data, size_t size) {
+
+	#ifdef __sun__
+	int rfd = openat(parent_fd, XATTR_RESOURCEFORK_NAME, O_XATTR | O_CREAT | O_TRUNC | O_WRONLY, 0666);
+	if (rfd < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
+	defer close_fd([rfd](){ close(rfd); });
+
+	if (!size) return;
+
+	ssize_t ok = write(rfd, data, size);
+	if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
+	#endif
+
+	#ifdef _WIN32
+	std::string tmp = parent_path + ":" XATTR_RESOURCEFORK_NAME;
+	int rfd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
+	if (rfd < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
+	defer close_fd([rfd](){ close(rfd); });
+
+	if (!size) return;
+
+	int ok = write(rfd, data, size);
+	if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
+	#endif
+
+	#ifdef __linux__
+	int ok = fsetxattr(parent_fd, XATTR_RESOURCEFORK_NAME, data, size, 0);
+	if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
+	#endif
+
+	#ifdef __APPLE__
+	int ok;
+	ok = fremovexattr(parent_fd, XATTR_RESOURCEFORK_NAME, 0);
+	if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
+	if (!size) return;
+	ok = fsetxattr(parent_fd, XATTR_RESOURCEFORK_NAME, data, size, 0, XATTR_CREATE);
+	if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
+	#endif
+}
+
+/*
+ * resource is straight data (cadius, nulib2, etc)
+ */
+void one_flat_file(const std::string &data, const std::string rsrc) noexcept try {
+
+	struct stat rsrc_st;
+	int ok;
+
+	if (_v) fprintf(stdout, "Merging %s & %s\n", rsrc.c_str(), data.c_str());
+
+	ok = stat(data.c_str(), &rsrc_st);
+	if (ok < 0) {
+		if (errno == ENOENT) {
+			if (_n) unlink_list.push_back(rsrc);
+			return;
+		}
+		throw_errno("stat");
+	}
+
+	// don't try to do directories.
+	if (S_ISDIR(rsrc_st.st_mode)) {
+		if (!_p) unlink_list.push_back(rsrc);
+		return;
+	}
+
+	int fd = open(data.c_str(), O_RDONLY | O_BINARY);
+	if (fd < 0) {
+		if (errno == ENOENT) {
+			if (_n) unlink_list.push_back(rsrc);
+			return;
+		}
+		throw_errno("open");
+	}
+	defer close_fd([fd]{close(fd); });
+
+	if (stat(rsrc.c_str(), &rsrc_st) < 0) throw_errno("stat");
+	if (rsrc_st.st_size == 0) {
+		// truncate any existing resource fork.
+		write_resource_fork(data, fd, nullptr, 0);
+		if (!_p) unlink_list.push_back(rsrc);
+		return;
+	}
+
+	mapped_file mf(rsrc, mapped_file::readonly, rsrc_st.st_size);
+	write_resource_fork(data, fd, mf.data(), mf.size());
+	if (!_p) unlink_list.push_back(rsrc);
+} catch (const std::exception &ex) {
+	_rv = 1;
+	fprintf(stderr, "Merging %s failed: %s\n", rsrc.c_str(), ex.what());
+}
+
 void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
 	struct stat rsrc_st;
@@ -202,36 +293,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 			}
 			#endif
 			case AS_RESOURCE: {
-				#ifdef __sun__
-				int rfd = openat(fd, XATTR_RESOURCEFORK_NAME, O_XATTR | O_CREAT | O_TRUNC | O_WRONLY, 0666);
-				if (rfd < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
-				defer close_fd([rfd](){ close(rfd); });
-
-				ssize_t ok = write(rfd, mf.data() + e.entryOffset, e.entryLength);
-				if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
-				//if (ok != e.entryLength) return -1;
-				#endif
-
-				#ifdef _WIN32
-				std::string tmp = data + ":" XATTR_RESOURCEFORK_NAME;
-				int rfd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
-				if (rfd < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
-				defer close_fd([rfd](){ close(rfd); });
-				int ok = write(rfd, mf.data() + e.entryOffset, e.entryLength);
-				if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
-				#endif
-
-				#ifdef __linux__
-				int ok = fsetxattr(fd, XATTR_RESOURCEFORK_NAME, mf.data() + e.entryOffset, e.entryLength, 0);
-				if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
-				#endif
-
-				#ifdef __APPLE__
-				int ok;
-				ok = fremovexattr(fd, XATTR_RESOURCEFORK_NAME, 0);
-				ok = fsetxattr(fd, XATTR_RESOURCEFORK_NAME, mf.data() + e.entryOffset, e.entryLength, 0, XATTR_CREATE);
-				if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
-				#endif
+				write_resource_fork(data, fd, mf.data()+ e.entryOffset, e.entryLength);
 				break;
 			}
 
@@ -281,6 +343,18 @@ void unlink_files(std::vector<std::string> &unlink_list) {
 	unlink_list.clear();
 }
 
+
+std::string is_raw_resource_fork(const std::string &s) {
+
+	auto l = s.length();
+	if (l > 17 && !strncmp("_ResourceFork.bin", s.data() + l - 17, 17))
+		return s.substr(0, l - 17);
+
+	if (l > 6 && !strncmp("_rsrc_", s.data() + l - 6, 6))
+		return s.substr(0, l - 6);
+
+	return "";
+}
 void one_dir(std::string dir) noexcept {
 
 	DIR *dirp;
@@ -340,23 +414,38 @@ void one_dir(std::string dir) noexcept {
 				}
 			}
 
+
 			if (name.length() > 2 && name[0] == '.' && name[1] == '_') {
 
 				one_file(dir + name.substr(2), dir + name);
 				continue;
 			}
 
+			/* _ResourceFork.bin or _rsrc_ raw resource data . */
+			std::string tmp = is_raw_resource_fork(name);
+			if (!tmp.empty()) {
+				one_flat_file(dir + tmp, dir + name);
+				continue;
+			}
+
 			if (!_f && name[0] != '.') {
 				std::string tmp = dir + name;
 				#ifdef DT_DIR
-				if (dp->d_type == DT_DIR) 
+				if (dp->d_type == DT_DIR) {
 					dir_list.push_back(tmp);
+					continue;
+				}
 				#else
 				struct stat st;
-				if (stat(tmp.c_str(), &st) == 0 && S_ISDIR(st.st_mode))
+				if (stat(tmp.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
 					dir_list.push_back(tmp);
+					continue;
+				}
 				#endif
 			}
+
+
+
 		}
 		closedir(dirp);
 	} else {

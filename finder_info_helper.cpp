@@ -55,17 +55,17 @@ namespace {
 
      ProDOS Macintosh
      File Type Auxiliary Type Creator Type File Type
-     $00        $0000           “pdos”  “BINA”
-     $04 (TXT)  $0000           “pdos”  “TEXT”
-     $FF (SYS)  (any)           “pdos”  “PSYS”
-     $B3 (S16)  $DByz           “pdos”  “p” $B3 $DB $yz
-     $B3 (S16)  (any)           “pdos”  “PS16”
-     $D7        $0000           “pdos”  “MIDI”
-     $D8        $0000           “pdos”  “AIFF”
-     $D8        $0001           “pdos”  “AIFC”
-     $E0        $0005           “dCpy”  “dImg”
-     $FF (SYS)  (any)           “pdos”  “PSYS”
-     $uv        $wxyz           “pdos”  “p” $uv $wx $yz
+     $00        $0000           'pdos'  'BINA'
+     $04 (TXT)  $0000           'pdos'  'TEXT'
+     $FF (SYS)  (any)           'pdos'  'PSYS'
+     $B3 (S16)  $DByz           'pdos'  'p' $B3 $DB $yz
+     $B3 (S16)  (any)           'pdos'  'PS16'
+     $D7        $0000           'pdos'  'MIDI'
+     $D8        $0000           'pdos'  'AIFF'
+     $D8        $0001           'pdos'  'AIFC'
+     $E0        $0005           'dCpy'  'dImg'
+     $FF (SYS)  (any)           'pdos'  'PSYS'
+     $uv        $wxyz           'pdos'  'p' $uv $wx $yz
 
 
 	  mpw standard:

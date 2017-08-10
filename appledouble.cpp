@@ -7,6 +7,7 @@
 #include <system_error>
 #include <string>
 #include <vector>
+#include <memory>
 
 #include <unistd.h>
 #include <stdio.h>
@@ -224,3 +225,4 @@ int main(int argc, char **argv) {
 	}
 	return _rv;
 }
+

@@ -15,9 +15,9 @@
 #include <string.h>
 #include <stdio.h>
 
+
 #ifdef _WIN32
 #include "win.h"
-#define XATTR_RESOURCEFORK_NAME "AFP_Resource"
 #else
 
 #include <err.h>
@@ -30,25 +30,13 @@
 #include <sys/stat.h>
 #include <dirent.h>
 
-#ifdef __linux__
-#include <attr/xattr.h>
-#define XATTR_RESOURCEFORK_NAME "user.com.apple.ResourceFork"
-#endif
-
-#ifdef __APPLE__
-#include <sys/xattr.h>
-#endif
-
-#ifndef XATTR_RESOURCEFORK_NAME
-#define XATTR_RESOURCEFORK_NAME "com.apple.ResourceFork"
-#endif
-
+#include <afp/finder_info.h>
+#include <afp/resource_fork.h>
 
 #include "applefile.h"
 #include "mapped_file.h"
 #include "defer.h"
 
-#include "finder_info_helper.h"
 
 #ifndef O_BINARY
 #define O_BINARY 0
@@ -93,46 +81,15 @@ void throw_errno(const std::string &what) {
 	throw std::system_error(errno, std::generic_category(), what);
 }
 
-
-void write_resource_fork(const std::string &parent_path, int parent_fd, void *data, size_t size) {
-
-	#ifdef __sun__
-	int rfd = openat(parent_fd, XATTR_RESOURCEFORK_NAME, O_XATTR | O_CREAT | O_TRUNC | O_WRONLY, 0666);
-	if (rfd < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
-	defer close_fd([rfd](){ close(rfd); });
-
-	if (!size) return;
-
-	ssize_t ok = write(rfd, data, size);
-	if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
-	#endif
-
-	#ifdef _WIN32
-	std::string tmp = parent_path + ":" XATTR_RESOURCEFORK_NAME;
-	int rfd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
-	if (rfd < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
-	defer close_fd([rfd](){ close(rfd); });
-
-	if (!size) return;
-
-	int ok = write(rfd, data, size);
-	if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
-	#endif
-
-	#ifdef __linux__
-	int ok = fsetxattr(parent_fd, XATTR_RESOURCEFORK_NAME, data, size, 0);
-	if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
-	#endif
-
-	#ifdef __APPLE__
-	int ok;
-	ok = fremovexattr(parent_fd, XATTR_RESOURCEFORK_NAME, 0);
-	if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
-	if (!size) return;
-	ok = fsetxattr(parent_fd, XATTR_RESOURCEFORK_NAME, data, size, 0, XATTR_CREATE);
-	if (ok < 0) throw_errno(XATTR_RESOURCEFORK_NAME);
-	#endif
+void throw_ec(const std::error_code &ec) {
+	throw std::system_error(ec);
 }
+
+void throw_ec(const std::error_code &ec, const std::string &what) {
+	throw std::system_error(ec, what);
+}
+
+
 
 /*
  * resource is straight data (cadius, nulib2, etc)
@@ -170,15 +127,25 @@ void one_flat_file(const std::string &data, const std::string rsrc) noexcept try
 	defer close_fd([fd]{close(fd); });
 
 	if (stat(rsrc.c_str(), &rsrc_st) < 0) throw_errno("stat");
+
+
+
+	std::error_code ec;
+
 	if (rsrc_st.st_size == 0) {
 		// truncate any existing resource fork.
-		write_resource_fork(data, fd, nullptr, 0);
+		if (!afp::resource_fork::remove(data, ec))
+			throw_ec(ec, "resource_fork::remove()");
+
 		if (!_p) unlink_list.push_back(rsrc);
 		return;
 	}
 
 	mapped_file mf(rsrc, mapped_file::readonly, rsrc_st.st_size);
-	write_resource_fork(data, fd, mf.data(), mf.size());
+
+	afp::resource_fork::write(data, mf.data(), mf.size(), ec);
+	if (ec) throw_ec(ec, "resource_fork::write()");
+
 	if (!_p) unlink_list.push_back(rsrc);
 } catch (const std::exception &ex) {
 	_rv = 1;
@@ -266,12 +233,12 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
 	});
 
-	finder_info_helper fi;
+	afp::finder_info fi;
 	std::error_code ec;
 	bool update_fi = false;
 	bool fi_ok = false;
 
-	fi_ok = fi.open(data, finder_info_helper::read_write, ec);
+	fi_ok = fi.open(data, afp::finder_info::read_write, ec);
 
 	std::for_each(begin, end, [&](const ASEntry &tmp){
 
@@ -294,7 +261,13 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 			}
 			#endif
 			case AS_RESOURCE: {
-				write_resource_fork(data, fd, mf.data()+ e.entryOffset, e.entryLength);
+				if (e.entryLength == 0) {
+					if (!afp::resource_fork::remove(data, ec))
+						throw_ec(ec, "resource_fork::remove()");
+				} else {
+					afp::resource_fork::write(data, mf.data()+ e.entryOffset, e.entryLength, ec);
+					if (ec) throw_ec(ec, "resource_fork::write()");
+				}
 				break;
 			}
 
@@ -304,7 +277,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 					fputs("Warning: Invalid Finder Info size.\n", stderr);
 					break;
 				}
-				memcpy(fi.finder_info(), mf.data() + e.entryOffset, 32);
+				memcpy(fi.data(), mf.data() + e.entryOffset, 32);
 				update_fi = true;
 				break;
 			}
@@ -322,7 +295,7 @@ void one_file(const std::string &data, const std::string &rsrc) noexcept try {
 
 	if (update_fi) {
 		if (!fi.write(ec)) {
-			throw_errno("com.apple.FinderInfo");
+			throw_ec(ec, "com.apple.FinderInfo");
 		}
 	}
 

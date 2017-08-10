@@ -23,33 +23,15 @@
 #endif
 
 #include "mapped_file.h"
-#include "xattr.h"
-#include "finder_info_helper.h"
+
+#include <afp/finder_info.h>
+#include <afp/resource_fork.h>
 
 #include "applefile.h"
 
 
 #ifndef O_BINARY
 #define O_BINARY 0
-#endif
-
-
-
-#if defined(__linux__)
-#define XATTR_RESOURCEFORK_NAME "user.com.apple.ResourceFork"
-#endif
-
-
-#if defined (_WIN32)
-#define XATTR_FINDERINFO_NAME "AFP_Resource"
-#endif
-
-#ifndef XATTR_FINDERINFO_NAME
-#define XATTR_FINDERINFO_NAME "com.apple.FinderInfo"
-#endif
-
-#ifndef XATTR_RESOURCEFORK_NAME
-#define XATTR_RESOURCEFORK_NAME "com.apple.ResourceFork"
 #endif
 
 
@@ -72,97 +54,6 @@ void help() {
 
 bool _v = false;
 int _rv = 0;
-
-
-std::vector<uint8_t> read_resource_fork(const std::string &path, std::error_code ec) {
-	std::vector<uint8_t> rv;
-
-	ec.clear();
-
-	#if defined(__sun__) || defined(_WIN32)
-	int fd;
-	struct stat st;
-
-	#if defined(__sun__)
-	fd = attropen(path.c_str(), XATTR_RESOURCEFORK_NAME, O_RDONLY | O_BINARY);
-	#else
-	std::string p(path);
-	p += ":" XATTR_RESOURCEFORK_NAME;
-
-	fd = open(p.c_str(), O_RDONLY | O_BINARY);
-	#endif
-	if (fd < 0) {
-		ec = std::error_code(errno, std::generic_category());
-		return rv;
-	}
-
-	if (fstat(fd, &st) < 0) {
-		ec = std::error_code(errno, std::generic_category());
-		close(fd);
-		return rv;
-	}
-
-	if (st.st_size == 0) {
-		close(fd);
-		return rv;
-	}
-
-	for(;;) {
-		rv.resize(st.st_size);
-		ssize_t ok = read(fd, rv.data(), st.st_size);
-		if (ok < 0) {
-			if (errno == EINTR) continue;
-			ec = std::error_code(errno, std::generic_category());
-			rv.clear();
-			break;
-		}
-		rv.resize(ok);
-		break;
-	}
-	close(fd);
-	return rv;
-	#else
-
-	int fd = open(path.c_str(), O_RDONLY | O_BINARY);
-	if (fd < 0) {
-		ec = std::error_code(errno, std::generic_category());
-		return rv;
-	}
-
-	for(;;) {
-		ssize_t size = size_xattr(fd, XATTR_RESOURCEFORK_NAME);
-		if (size < 0) {
-			if (errno == EINTR) continue;
-			if (errno == ENOATTR) {
-				rv.clear();
-				break;
-			}
-			ec = std::error_code(errno, std::generic_category());
-			close(fd);
-			return rv;
-		}
-		if (size == 0) break;
-		rv.resize(size);
-
-		ssize_t rsize = read_xattr(fd, XATTR_RESOURCEFORK_NAME, rv.data(), size);
-		if (rsize < 0) {
-			if (errno == ERANGE || errno == EINTR) continue; // try again.
-			if (errno == ENOATTR) {
-				rv.clear();
-				break;
-			}
-			ec = std::error_code(errno, std::generic_category());
-			rv.clear();
-			break;
-		}
-		rv.resize(rsize);
-		break;
-	}
-	close(fd);
-	return rv;
-
-	#endif
-}
 
 
 /* check if a file is apple single or apple double format (or neither). */
@@ -190,6 +81,7 @@ void one_file(const std::string &infile, const std::string &outfile) {
 	mapped_file mf;
 	ASHeader head;
 	ASEntry e;
+	std::error_code ec;
 
 
 	try {
@@ -220,26 +112,38 @@ void one_file(const std::string &infile, const std::string &outfile) {
 
 	int count = 0;
 
-	std::error_code ec;
+	afp::finder_info fi;
+	afp::resource_fork rf;
 
-	finder_info_helper fi;
+	size_t rfork_size = 0;
+	std::unique_ptr<uint8_t[]> rfork_data;
+
 	bool fi_ok = fi.open(infile, ec);
+	bool rf_ok = rf.open(infile, afp::resource_fork::read_only, ec);
 
 
-	// ENOATTR is ok... but that's not an errc...
-	std::vector<uint8_t> resource = read_resource_fork(infile, ec);
+	if (rf_ok) {
+		rfork_size = rf.size(ec);
+		if (rfork_size) {
 
-	if (ec) {
-		warnc(ec.value(), "%s resource fork\n", infile.c_str());
-		return;
+			rfork_data.reset(new uint8_t[rfork_size]);
+			rfork_size = rf.read(rfork_data.get(), rfork_size, ec);
+
+			if (ec) {
+				warnx("%s resource fork: %s", infile.c_str(), ec.message().c_str());
+				return;
+			}
+		}
+		rf.close();
 	}
+	if (!rfork_size) rf_ok = false;
 
-	if (!fi_ok && resource.empty()) {
+	if (!fi_ok && !rf_ok) {
 		warnx("%s: File is not extended.", infile.c_str());
 		return;
 	}
 
-	if (resource.size()) count++;
+	if (rf_ok) count++;
 	if (fi_ok) count++;
 
 
@@ -263,26 +167,26 @@ void one_file(const std::string &infile, const std::string &outfile) {
 		offset += 32;
 	}
 	// 2 - resource fork?
-	if (resource.size()) {
+	if (rf_ok) {
 
 		e.entryID = htonl(AS_RESOURCE);
 		e.entryOffset = htonl(offset);
-		e.entryLength = htonl(resource.size());
+		e.entryLength = htonl(rfork_size);
 		write(fd, &e, sizeof(e));
 
-		offset += resource.size();
+		offset += rfork_size;
 	}
 
 	// now write it..
 
 	// 1 - finder info
 	if (fi_ok) {
-		write(fd, fi.finder_info(), 32);
+		write(fd, fi.data(), 32);
 	}
 
 	// 2 - resource fork?
-	if (resource.size()) {
-		write(fd, resource.data(), resource.size());
+	if (rf_ok) {
+		write(fd, rfork_data.get(), rfork_size);
 	}
 	close(fd);
 }

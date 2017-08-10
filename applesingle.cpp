@@ -15,12 +15,14 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <string.h>
 
 #ifdef _WIN32
 #include "win.h"
 #else
 #include <err.h>
 #include <sysexits.h>
+#include <arpa/inet.h>
 #endif
 
 #include "mapped_file.h"
